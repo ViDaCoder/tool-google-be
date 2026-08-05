@@ -1,0 +1,72 @@
+# Môi trường ảo Python (Virtual Environment)
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# File cấu hình bảo mật & biến môi trường
+.env
+.env.local
+.env.*.local
+
+# Thư mục lưu trữ Profile trình duyệt Chrome (Chứa Cookie & Session cá nhân của các tài khoản Gmail)
+.browser_profiles/
+browser_profiles/
+.browser_profiles/*
+
+# File rác Python (Bytecode & Cache)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Đơn vị kiểm thử & Coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.noserc
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# Cơ sở dữ liệu SQLite & File tải lên tạm thời
+*.db
+*.sqlite
+*.sqlite3
+uploads/
+maps_out.html
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Log files
+*.log
+logs/

@@ -1,0 +1,30 @@
+# Core Web Framework
+fastapi
+uvicorn[standard]
+python-multipart
+
+# Data Validation & Serialization
+pydantic
+pydantic-settings
+
+# Database, ORM & Migrations
+# For PostgreSQL (SQLAlchemy Async engine & Alembic migrations)
+sqlalchemy
+asyncpg
+psycopg2-binary
+alembic
+
+# Authentication & Security
+PyJWT[crypto]
+passlib[bcrypt]
+bcrypt<5.0.0
+
+# HTTP Client & API Requests (Async-first HTTP client)
+httpx
+
+# AI / LLM Integrations (Gemini API SDK)
+google-genai
+
+# Web Scraping & Crawling (Backend Data Collection)
+playwright
+beautifulsoup4
