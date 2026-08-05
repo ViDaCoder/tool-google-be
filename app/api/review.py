@@ -209,7 +209,9 @@ async def generate_reviews(
             detail=f"Lỗi khi gọi Gemini AI để sinh bài review: {str(e)}"
         )
 
-    # 4. Lưu bài nháp review vào bảng review_drafts (chưa lưu vào review_history)
+    # 4. Lưu bài nháp review vào bảng review_drafts (xóa các bản ghi nháp cũ của doanh nghiệp này nếu có)
+    await db.execute(delete(ReviewDraft).where(ReviewDraft.business_id == business.id))
+    
     draft_id = f"draft_{uuid.uuid4().hex[:16]}"
     
     new_draft = ReviewDraft(
@@ -248,6 +250,10 @@ class DraftItemSchema(BaseModel):
     rating: int = 5
     content: str
     images: list[str] = []
+    gmail: str | None = None
+    proxy: str | None = None
+    status: str | None = None
+    statusText: str | None = None
 
 class UpdateDraftsRequest(BaseModel):
     reviews: list[DraftItemSchema]
@@ -270,14 +276,20 @@ async def get_business_drafts(
     drafts = result.scalars().all()
     
     all_reviews = []
-    for d in drafts:
-        if isinstance(d.reviews, list):
-            for r in d.reviews:
-                all_reviews.append(r)
+    if drafts:
+        latest_draft = drafts[0]
+        if isinstance(latest_draft.reviews, list):
+            all_reviews = latest_draft.reviews
+
+        # Tự động dọn dẹp các bản ghi nháp rác dư thừa nếu có
+        if len(drafts) > 1:
+            for old_d in drafts[1:]:
+                await db.delete(old_d)
+            await db.commit()
 
     return {
         "business_id": business_id,
-        "drafts": drafts,
+        "drafts": drafts[:1],
         "reviews": all_reviews
     }
 
@@ -297,12 +309,16 @@ async def update_business_drafts(
         .where(ReviewDraft.business_id == business_id)
         .order_by(ReviewDraft.created_at.desc())
     )
-    draft_record = result.scalars().first()
+    drafts = result.scalars().all()
 
     formatted_reviews = [r.model_dump() for r in payload.reviews]
 
-    if draft_record:
+    if drafts:
+        draft_record = drafts[0]
         draft_record.reviews = formatted_reviews
+        if len(drafts) > 1:
+            for old_d in drafts[1:]:
+                await db.delete(old_d)
     else:
         biz_res = await db.execute(select(Business).where(Business.id == business_id))
         biz = biz_res.scalars().first()

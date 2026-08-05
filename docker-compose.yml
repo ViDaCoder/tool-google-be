@@ -1,0 +1,47 @@
+version: "3.8"
+
+services:
+  # 1. Cơ sở dữ liệu PostgreSQL Service
+  db:
+    image: postgres:15-alpine
+    container_name: reviewgen_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: Admin@123
+      POSTGRES_DB: my_database
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d my_database"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. FastAPI Backend API Service
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: reviewgen_backend
+    restart: always
+    ports:
+      - "8000:8000"
+    command: sh -c "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    environment:
+      - URL_BACKEND_PUBLIC=http://localhost:8000
+      - ALLOW_ORIGINS=*
+      # Kết nối trực tiếp đến PostgreSQL container 'db' qua cổng 5432
+      - DATABASE_URL=postgresql://postgres:Admin%40123@db:5432/my_database
+    volumes:
+      - .:/app
+      - /app/venv
+      - .browser_profiles:/app/.browser_profiles
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
