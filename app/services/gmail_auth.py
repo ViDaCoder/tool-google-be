@@ -6,6 +6,7 @@ import shutil
 import asyncio
 import subprocess
 from urllib.parse import urlparse
+from playwright.sync_api import sync_playwright
 from app.services.logs import log_system_activity
 
 def get_chrome_path() -> str:
@@ -98,8 +99,6 @@ def _sync_open_interactive_login() -> dict:
     để Google nhận diện 100% là ứng dụng Chrome chính chủ của Windows, giúp người dùng đăng nhập mượt mà.
     Playwright kết nối qua Remote Debugging Port (CDP) để tự động bóc tách Email & lưu Session Profile.
     """
-    from playwright.sync_api import sync_playwright
-
     profiles_base = os.path.join(os.getcwd(), ".browser_profiles")
     os.makedirs(profiles_base, exist_ok=True)
 
@@ -238,8 +237,6 @@ def _sync_interactive_gmail_login(user_data_dir: str, email: str, proxy_config: 
     Khởi chạy Google Chrome nguyên bản bằng subprocess cho tài khoản Gmail có sẵn để nạp lại phiên.
     Sử dụng Remote Debugging Port (CDP) động để đếm cookies & tự lưu session xuống đĩa.
     """
-    from playwright.sync_api import sync_playwright
-
     chrome_exe = get_chrome_path()
     port = find_free_port()
 
