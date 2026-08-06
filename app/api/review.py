@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import delete
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.database import get_db
 from app.models.business import Business
@@ -209,29 +210,39 @@ async def generate_reviews(
             detail=f"Lỗi khi gọi Gemini AI để sinh bài review: {str(e)}"
         )
 
-    # 4. Lưu bài nháp review vào bảng review_drafts (xóa các bản ghi nháp cũ của doanh nghiệp này nếu có)
-    await db.execute(delete(ReviewDraft).where(ReviewDraft.business_id == business.id))
-    
-    draft_id = f"draft_{uuid.uuid4().hex[:16]}"
-    
-    new_draft = ReviewDraft(
-        id=draft_id,
-        business_id=business.id,
-        business_name=business.name,
-        category=business.category,
-        url=business.url,
-        tone=request_data.tone,
-        language=request_data.language,
-        length=request_data.length,
-        custom_keywords=request_data.focus_keywords,
-        reviews=reviews,
-        created_at=datetime.now()
+    # 4. Lưu bài nháp review vào bảng review_drafts (Nối tiếp các bài mới vào bài nháp hiện có của doanh nghiệp)
+    existing_draft_res = await db.execute(
+        select(ReviewDraft).where(ReviewDraft.business_id == business.id)
     )
-    db.add(new_draft)
+    existing_draft = existing_draft_res.scalars().first()
+
+    if existing_draft:
+        existing_reviews = existing_draft.reviews if isinstance(existing_draft.reviews, list) else []
+        combined_reviews = existing_reviews + reviews
+        existing_draft.reviews = combined_reviews
+        existing_draft.created_at = datetime.now()
+        draft_record = existing_draft
+    else:
+        draft_id = f"draft_{uuid.uuid4().hex[:16]}"
+        draft_record = ReviewDraft(
+            id=draft_id,
+            business_id=business.id,
+            business_name=business.name,
+            category=business.category,
+            url=business.url,
+            tone=request_data.tone,
+            language=request_data.language,
+            length=request_data.length,
+            custom_keywords=request_data.focus_keywords,
+            reviews=reviews,
+            created_at=datetime.now()
+        )
+        db.add(draft_record)
+
     await db.commit()
     
     return ReviewHistoryResponse(
-        id=new_draft.id,
+        id=draft_record.id,
         business_id=business.id,
         business_name=business.name,
         category=business.category,
@@ -240,9 +251,34 @@ async def generate_reviews(
         language=request_data.language,
         length=request_data.length,
         custom_keywords=request_data.focus_keywords,
-        reviews=reviews,
-        created_at=new_draft.created_at
+        reviews=draft_record.reviews,
+        created_at=draft_record.created_at
     )
+
+
+import re
+
+def slugify(text: str) -> str:
+    if not text:
+        return ""
+    text = text.lower().strip()
+    text = re.sub(r'[^\w\s-]', '', text)
+    text = re.sub(r'[\s_-]+', '-', text)
+    text = re.sub(r'^-+|-+$', '', text)
+    return text
+
+async def _find_business_by_any_id(db: AsyncSession, business_id: str) -> Business | None:
+    biz_res = await db.execute(select(Business))
+    all_biz = biz_res.scalars().all()
+    clean_id = business_id.strip().lower()
+    for b in all_biz:
+        if (
+            b.id.lower() == clean_id or 
+            b.name.strip().lower() == clean_id or 
+            slugify(b.name) == clean_id
+        ):
+            return b
+    return None
 
 
 class DraftItemSchema(BaseModel):
@@ -268,12 +304,19 @@ async def get_business_drafts(
     """
     Lấy danh sách các bài review nháp đã được sinh cho doanh nghiệp từ bảng review_drafts.
     """
-    result = await db.execute(
-        select(ReviewDraft)
-        .where(ReviewDraft.business_id == business_id)
-        .order_by(ReviewDraft.created_at.desc())
-    )
-    drafts = result.scalars().all()
+    matched_biz = await _find_business_by_any_id(db, business_id)
+    target_ids = {business_id.lower()}
+    target_names = {business_id.lower()}
+    if matched_biz:
+        target_ids.add(matched_biz.id.lower())
+        target_names.add(matched_biz.name.strip().lower())
+
+    result = await db.execute(select(ReviewDraft).order_by(ReviewDraft.created_at.desc()))
+    all_drafts = result.scalars().all()
+    drafts = [
+        d for d in all_drafts 
+        if d.business_id.lower() in target_ids or d.business_name.strip().lower() in target_names
+    ]
     
     all_reviews = []
     if drafts:
@@ -304,32 +347,40 @@ async def update_business_drafts(
     """
     Cập nhật danh sách bài nháp review của doanh nghiệp vào cơ sở dữ liệu (bảng review_drafts).
     """
-    result = await db.execute(
-        select(ReviewDraft)
-        .where(ReviewDraft.business_id == business_id)
-        .order_by(ReviewDraft.created_at.desc())
-    )
-    drafts = result.scalars().all()
+    matched_biz = await _find_business_by_any_id(db, business_id)
+    target_id = matched_biz.id if matched_biz else business_id
+    target_name = matched_biz.name if matched_biz else business_id
+
+    target_ids = {business_id.lower(), target_id.lower()}
+    target_names = {business_id.lower(), target_name.strip().lower()}
+
+    result = await db.execute(select(ReviewDraft).order_by(ReviewDraft.created_at.desc()))
+    all_drafts = result.scalars().all()
+    drafts = [
+        d for d in all_drafts 
+        if d.business_id.lower() in target_ids or d.business_name.strip().lower() in target_names
+    ]
 
     formatted_reviews = [r.model_dump() for r in payload.reviews]
 
     if drafts:
         draft_record = drafts[0]
+        draft_record.business_id = target_id
+        draft_record.business_name = target_name
         draft_record.reviews = formatted_reviews
+        flag_modified(draft_record, "reviews")
+        draft_record.created_at = datetime.now()
         if len(drafts) > 1:
             for old_d in drafts[1:]:
                 await db.delete(old_d)
     else:
-        biz_res = await db.execute(select(Business).where(Business.id == business_id))
-        biz = biz_res.scalars().first()
-        biz_name = biz.name if biz else "Doanh nghiệp"
-        biz_cat = biz.category if biz else "Dịch vụ"
-        biz_url = biz.url if biz else ""
+        biz_cat = matched_biz.category if matched_biz else "Dịch vụ"
+        biz_url = matched_biz.url if matched_biz else ""
         
         new_draft = ReviewDraft(
             id=f"draft_{uuid.uuid4().hex[:16]}",
-            business_id=business_id,
-            business_name=biz_name,
+            business_id=target_id,
+            business_name=target_name,
             category=biz_cat,
             url=biz_url,
             tone="Nhiệt tình",
@@ -370,10 +421,19 @@ async def delete_business_drafts(
     """
     Xóa toàn bộ bài nháp review của doanh nghiệp khỏi cơ sở dữ liệu (bảng review_drafts).
     """
-    result = await db.execute(
-        select(ReviewDraft).where(ReviewDraft.business_id == business_id)
-    )
-    drafts = result.scalars().all()
+    matched_biz = await _find_business_by_any_id(db, business_id)
+    target_ids = {business_id.lower()}
+    target_names = {business_id.lower()}
+    if matched_biz:
+        target_ids.add(matched_biz.id.lower())
+        target_names.add(matched_biz.name.strip().lower())
+
+    result = await db.execute(select(ReviewDraft))
+    all_drafts = result.scalars().all()
+    drafts = [
+        d for d in all_drafts 
+        if d.business_id.lower() in target_ids or d.business_name.strip().lower() in target_names
+    ]
     
     for d in drafts:
         await db.delete(d)
@@ -391,7 +451,7 @@ async def delete_business_drafts(
         "statusCode": 200,
         "success": True,
         "data": {
-            "message": "Đã xóa bài nháp review khỏi cơ sở dữ liệu thành công."
+            "message": "Đã xóa toàn bộ bài nháp của doanh nghiệp thành công."
         },
         "error": None
     }

@@ -151,27 +151,31 @@ def _sync_open_interactive_login() -> dict:
                         break
 
                     current_url = page.url
-                    # 1. Thử bóc tách nhanh Email từ trang hiện tại
                     em = _extract_email_from_page(page)
-                    if em and _is_post_login_page(current_url):
-                        detected_email = em
-                        print(f"[GmailAuth Native] Instant detected logged in email: {detected_email}")
-                        break
 
-                    # 2. Nếu đã vào trang sau đăng nhập mà chưa bóc tách được email -> dùng tab ẩn bóc tách
                     if _is_post_login_page(current_url):
-                        try:
-                            bg_page = context.new_page()
-                            bg_page.goto("https://myaccount.google.com/email", wait_until="domcontentloaded", timeout=5000)
-                            time.sleep(1)
-                            bg_em = _extract_email_from_page(bg_page)
-                            bg_page.close()
-                            if bg_em:
-                                detected_email = bg_em
-                                print(f"[GmailAuth Native] Detected email from background tab: {detected_email}")
-                                break
-                        except Exception as bg_err:
-                            print(f"[GmailAuth Native] Background email extraction sub-step error: {bg_err}")
+                        if em:
+                            detected_email = em
+                        else:
+                            try:
+                                bg_page = context.new_page()
+                                bg_page.goto("https://myaccount.google.com/email", wait_until="domcontentloaded", timeout=5000)
+                                time.sleep(1)
+                                bg_em = _extract_email_from_page(bg_page)
+                                bg_page.close()
+                                if bg_em:
+                                    detected_email = bg_em
+                            except Exception as bg_err:
+                                print(f"[GmailAuth Native] Background email extraction sub-step error: {bg_err}")
+
+                        if detected_email:
+                            print(f"[GmailAuth Native] Successfully detected login for {detected_email}. Keeping Chrome open up to 120s for full session data collection...")
+                            for wait_sec in range(120):
+                                time.sleep(1)
+                                if proc.poll() is not None or not context.pages or (context.pages and page.is_closed()):
+                                    print("[GmailAuth Native] Chrome window closed by user after login.")
+                                    break
+                            break
                 except Exception as loop_err:
                     print(f"[GmailAuth Native] Chrome disconnected or closed: {loop_err}")
                     break

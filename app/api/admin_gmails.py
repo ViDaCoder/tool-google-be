@@ -1,3 +1,4 @@
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -80,7 +81,7 @@ async def list_gmails(
 ):
     """Lấy danh sách tất cả tài khoản Gmail kèm theo Proxy được phân bổ cố định."""
     from app.services.gmail_proxy_service import get_or_assign_proxy_for_gmail
-    result = await db.execute(select(GmailAccount).order_by(GmailAccount.id.desc()))
+    result = await db.execute(select(GmailAccount).order_by(GmailAccount.id.asc()))
     gmails = result.scalars().all()
     
     response_list = []

@@ -17,7 +17,7 @@ alembic
 # Authentication & Security
 PyJWT[crypto]
 passlib[bcrypt]
-bcrypt<5.0.0
+bcrypt==4.0.1
 
 # HTTP Client & API Requests (Async-first HTTP client)
 httpx
