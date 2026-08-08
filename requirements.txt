@@ -28,3 +28,5 @@ google-genai
 # Web Scraping & Crawling (Backend Data Collection)
 playwright
 beautifulsoup4
+pywinauto
+

@@ -191,7 +191,13 @@ async def parse_business(
             detail=f"Lỗi khi phân tích dữ liệu bằng Gemini AI: {str(e)}"
         )
 
-    # 5. Lưu dữ liệu cào được và kết quả phân tích của AI vào Database
+    # 5. Tính toán đường dẫn thư mục ảnh của doanh nghiệp trước khi lưu
+    import os
+    from app.services.poster import to_unsigned_snake_case
+    folder_name = to_unsigned_snake_case(data["name"])
+    image_folder_path = os.path.join(r"C:\hinh_google", folder_name) if folder_name else None
+
+    # 6. Lưu dữ liệu cào được và kết quả phân tích của AI vào Database
     if business:
         # Cập nhật bản ghi cũ
         business.name = data["name"]
@@ -203,6 +209,7 @@ async def parse_business(
         business.extracted_keywords = ai_analysis["extracted_keywords"]
         business.analysis_info = ai_analysis["analysis_info"]
         business.review_strategy = ai_analysis["review_strategy"]
+        business.image_folder = image_folder_path
         business.updated_at = datetime.now()
     else:
         # Tạo bản ghi mới
@@ -218,13 +225,23 @@ async def parse_business(
             raw_reviews_sample=data["raw_reviews_sample"],
             extracted_keywords=ai_analysis["extracted_keywords"],
             analysis_info=ai_analysis["analysis_info"],
-            review_strategy=ai_analysis["review_strategy"]
+            review_strategy=ai_analysis["review_strategy"],
+            image_folder=image_folder_path
         )
         db.add(business)
 
     try:
         await db.commit()
         await db.refresh(business)
+        
+        # Tự động tạo thư mục hình ảnh của doanh nghiệp trong C:\hinh_google
+        if image_folder_path:
+            try:
+                os.makedirs(image_folder_path, exist_ok=True)
+                print(f"[Business API] Automatically created business image folder: {image_folder_path}")
+            except Exception as dir_err:
+                print(f"[Business API Warning] Failed to create image folder: {dir_err}")
+            
     except Exception as e:
         await db.rollback()
     return business

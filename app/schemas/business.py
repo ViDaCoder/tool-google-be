@@ -26,5 +26,6 @@ class BusinessResponse(BaseModelConfig):
     raw_reviews_sample: list[str]
     analysis_info: str | None = None
     review_strategy: str | None = None
+    image_folder: str | None = None
     created_at: datetime
     updated_at: datetime

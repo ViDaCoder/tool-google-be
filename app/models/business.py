@@ -18,5 +18,7 @@ class Business(Base):
     raw_reviews_sample: Mapped[list] = mapped_column(JSON, default=list, nullable=False)  # Các review mẫu cào được
     analysis_info: Mapped[str | None] = mapped_column(Text, nullable=True)  # Thông tin phân tích tổng hợp
     review_strategy: Mapped[str | None] = mapped_column(Text, nullable=True)  # Kịch bản review đề xuất
+    image_folder: Mapped[str | None] = mapped_column(String(500), nullable=True)  # Đường dẫn thư mục hình ảnh
     created_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=func.now(), onupdate=func.now(), nullable=False)
+

@@ -183,6 +183,85 @@ async def generate_reviews(
                 else:
                     proxy_map[g.email.lower()] = server_clean
 
+        # Tự động phân bổ hình ảnh cho từng bài review nháp mới
+        try:
+            import os
+            import glob
+            import random
+            from app.services.poster import to_unsigned_snake_case
+            
+            used_images = set()
+            
+            # 1. Thu thập ảnh đã có trong Lịch sử Đăng bài (ReviewHistory)
+            hist_res = await db.execute(
+                select(ReviewHistory).where(ReviewHistory.business_id == business.id)
+            )
+            history_records = hist_res.scalars().all()
+            for hr in history_records:
+                if isinstance(hr.reviews, list):
+                    for r_item in hr.reviews:
+                        if isinstance(r_item, dict) and r_item.get("images"):
+                            for img in r_item["images"]:
+                                used_images.add(os.path.abspath(img).lower())
+            
+            # 2. Thu thập ảnh đã có trong các bài Nháp hiện có (ReviewDraft)
+            draft_res = await db.execute(
+                select(ReviewDraft).where(ReviewDraft.business_id == business.id)
+            )
+            draft_record = draft_res.scalars().first()
+            if draft_record and isinstance(draft_record.reviews, list):
+                for r_item in draft_record.reviews:
+                    if isinstance(r_item, dict) and r_item.get("images"):
+                        for img in r_item["images"]:
+                            used_images.add(os.path.abspath(img).lower())
+            
+            # 3. Quét thư mục hinh_google
+            all_available_images = []
+            hinh_google_root = r"C:\hinh_google"
+            if os.path.exists(hinh_google_root):
+                clean_snake_name = to_unsigned_snake_case(business.name)
+                biz_dir_snake = os.path.join(hinh_google_root, clean_snake_name)
+                clean_biz_name = re.sub(r'[\\/*?:"<>|]', '', business.name).strip()
+                biz_dir = os.path.join(hinh_google_root, clean_biz_name)
+                biz_dir_raw = os.path.join(hinh_google_root, business.name.strip())
+                
+                target_dir = None
+                if os.path.exists(biz_dir_snake) and os.path.isdir(biz_dir_snake):
+                    target_dir = biz_dir_snake
+                elif os.path.exists(biz_dir) and os.path.isdir(biz_dir):
+                    target_dir = biz_dir
+                elif os.path.exists(biz_dir_raw) and os.path.isdir(biz_dir_raw):
+                    target_dir = biz_dir_raw
+                
+                if target_dir:
+                    for ext in ("*.jpg", "*.jpeg", "*.png", "*.webp", "*.bmp"):
+                        all_available_images.extend(glob.glob(os.path.join(target_dir, ext)))
+                        all_available_images.extend(glob.glob(os.path.join(target_dir, ext.upper())))
+                else:
+                    for ext in ("*.jpg", "*.jpeg", "*.png", "*.webp", "*.bmp"):
+                        all_available_images.extend(glob.glob(os.path.join(hinh_google_root, ext)))
+                        all_available_images.extend(glob.glob(os.path.join(hinh_google_root, ext.upper())))
+            
+            all_available_images = list(set([os.path.abspath(p) for p in all_available_images]))
+            unselected_images = [p for p in all_available_images if p.lower() not in used_images]
+            
+            print(f"[Generate API Allocation] Total available: {len(all_available_images)}, Unselected: {len(unselected_images)}")
+            
+            # Phân bổ cho từng bài review
+            for r in reviews:
+                r["images"] = []
+                if unselected_images:
+                    num_to_select = min(random.randint(1, 4), len(unselected_images))
+                    selected_for_r = random.sample(unselected_images, num_to_select)
+                    r["images"] = selected_for_r
+                    # Đánh dấu là đã sử dụng để không phân bổ lại
+                    for img in selected_for_r:
+                        used_images.add(img.lower())
+                        unselected_images.remove(img)
+                    print(f"[Generate API Allocation] Allocated {num_to_select} images to review: {selected_for_r}")
+        except Exception as gen_alloc_err:
+            print(f"[Generate API Allocation Error] Failed to pre-allocate images: {gen_alloc_err}")
+
         # Gán trực tiếp từng Gmail khả dụng chưa dùng cho bài nháp tương ứng
         for idx, r in enumerate(reviews):
             if idx < len(fresh_gmails):
@@ -569,13 +648,14 @@ async def post_review_auto_backend(
         )
 
     # 2. Ghi nhận bài đã đăng vào review_history (Chỉ tạo mới khi record_history=True)
+    history_id = None
     if payload.record_history:
         history_id = f"hist_{uuid.uuid4().hex[:16]}"
         posted_review_item = {
             "id": f"rev_{uuid.uuid4().hex[:8]}",
             "rating": payload.rating,
             "content": payload.review_text,
-            "images": payload.images,
+            "images": payload.images if payload.images else poster_res.get("images", []),
             "gmail": payload.gmail,
             "proxy": payload.proxy,
             "posted_at": datetime.now().isoformat()
