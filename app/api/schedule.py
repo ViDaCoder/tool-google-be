@@ -347,8 +347,12 @@ async def create_auto_batch_schedule(
             current_scheduled_time = current_scheduled_time + timedelta(hours=random_hours)
             current_scheduled_time = current_scheduled_time.replace(second=0, microsecond=0)
         
-        # Đảm bảo không trùng lặp / quá sát (Collision Avoidance)
+        # Đảm bảo không trùng lặp / quá sát (Collision Avoidance) và nằm trong dải 9h - 22h
         temp_time = current_scheduled_time.replace(second=0, microsecond=0)
+        if temp_time.hour < 9:
+            temp_time = temp_time.replace(hour=9, minute=random.randint(0, 30))
+        elif temp_time.hour > 22 or (temp_time.hour == 22 and temp_time.minute > 0):
+            temp_time = (temp_time + timedelta(days=1)).replace(hour=9, minute=random.randint(0, 30))
         while True:
             conflict = False
             for booked_time in booked_times:

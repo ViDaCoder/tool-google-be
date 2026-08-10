@@ -272,52 +272,41 @@ def _playwright_sync_post(
     Playwright kết nối ngầm qua Remote Debugging Port (CDP) để giám sát và mở trang review.
     """
     chrome_exe = get_chrome_path()
-    port = find_free_port()
 
-    cmd = [
-        chrome_exe,
-        f"--user-data-dir={user_data_dir}",
-        f"--remote-debugging-port={port}",
-        "--no-first-run",
-        "--no-default-browser-check"
-    ]
-
-    if headless:
-        cmd.append("--headless=new")
-
+    playwright_proxy = None
     if proxy_config and proxy_config.get("server"):
-        clean_server = proxy_config["server"].replace("http://", "").replace("https://", "")
-        cmd.append(f"--proxy-server=http://{clean_server}")
+        playwright_proxy = {
+            "server": proxy_config["server"]
+        }
+        if proxy_config.get("username"):
+            playwright_proxy["username"] = proxy_config["username"]
+        if proxy_config.get("password"):
+            playwright_proxy["password"] = proxy_config["password"]
 
-    cmd.append(target_url)
-
-    print(f"[Poster Native] Launching native Chrome at port {port} for target: {target_url}...")
-    proc = subprocess.Popen(cmd)
-    time.sleep(2)
+    print(f"[Poster Persistent Context] Launching Chrome context for target: {target_url} (Proxy: {playwright_proxy})...")
 
     with sync_playwright() as p:
         try:
-            browser = p.chromium.connect_over_cdp(f"http://localhost:{port}")
-            context = browser.contexts[0]
-            
-            # Chờ và tìm đúng trang Google Search hoặc trang review có sẵn trong context
-            page = None
-            for attempt in range(10):
-                for p_cand in context.pages:
-                    url_str = p_cand.url.lower()
-                    print(f"[Poster Native Debug] Attempt {attempt+1}: Checking page: URL='{p_cand.url}', Title='{p_cand.title()}'")
-                    if "google.com" in url_str or "google.com.vn" in url_str or "search" in url_str:
-                        page = p_cand
-                        break
-                if page:
-                    break
-                time.sleep(1)
-            
-            if not page:
-                print("[Poster Native] Target Google page not found in context.pages, falling back to first page.")
-                page = context.pages[0] if context.pages else context.new_page()
-            else:
-                print(f"[Poster Native] Successfully connected to target page: {page.url}")
+            context = p.chromium.launch_persistent_context(
+                user_data_dir=user_data_dir,
+                executable_path=chrome_exe,
+                headless=headless,
+                proxy=playwright_proxy,
+                args=[
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "--test-type",
+                    "--disable-infobars"
+                ]
+            )
+
+            page = context.pages[0] if context.pages else context.new_page()
+
+            try:
+                print(f"[Poster Persistent Context] Navigating to target URL: {target_url}")
+                page.goto(target_url, timeout=45000)
+            except Exception as nav_err:
+                print(f"[Poster Persistent Context] Initial navigation warning: {nav_err}")
 
             # Đăng ký tự động tiêm con trỏ chuột màu đỏ khi điều hướng trang (Hỗ trợ cả trong và ngoài iframe)
             try:
@@ -675,11 +664,11 @@ def _playwright_sync_post(
                     print(f"[Poster Native Warning] Auto submit click failed: {submit_err}")
 
             # Giữ trình duyệt mở cho người dùng tự do thao tác dán bài và đăng (Thoát ngay khi người dùng đóng Chrome)
-            if not is_submitted:
+            if not is_submitted and not headless:
                 for _ in range(600):
                     time.sleep(1)
                     try:
-                        if proc.poll() is not None or page.is_closed() or not context.pages:
+                        if page.is_closed() or not context.pages:
                             print("[Poster Native] Chrome window closed by user.")
                             break
                         page.title()
@@ -687,24 +676,15 @@ def _playwright_sync_post(
                         print("[Poster Native] Detected browser close. Exiting loop.")
                         break
             else:
-                print("[Poster Native] Auto submitted successfully. Closing browser...")
+                print("[Poster Native] Finished task. Closing browser context...")
 
             try:
-                browser.close()
+                context.close()
             except Exception:
                 pass
 
-        except Exception as cdp_err:
-            print(f"[Poster Native Error] CDP connection error: {cdp_err}")
-
-    try:
-        proc.terminate()
-        proc.wait(timeout=3)
-    except Exception:
-        try:
-            proc.kill()
-        except Exception:
-            pass
+        except Exception as p_err:
+            print(f"[Poster Native Error] Playwright execution error: {p_err}")
 
     return is_submitted
 
