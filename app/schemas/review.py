@@ -9,6 +9,14 @@ class ReviewGenerateRequest(BaseModelConfig):
     length: str = Field(..., description="Độ dài của review (Ngắn, Vừa, Dài)")
     quantity: int = Field(3, description="Số lượng câu review cần sinh", ge=1, le=1000)
     focus_keywords: list[str] = Field(default=[], description="Danh sách từ khóa bắt buộc chèn vào review")
+    
+    # Cấu hình tự động lên lịch sau khi sinh
+    auto_schedule: bool = Field(default=False, description="Tự động đặt lịch đăng review")
+    schedule_start_at: datetime | None = Field(default=None, description="Thời gian bắt đầu đặt lịch")
+    min_interval_hours: int = Field(24, ge=1, description="Khoảng cách giờ tối thiểu")
+    max_interval_hours: int = Field(48, ge=1, description="Khoảng cách giờ tối đa")
+    schedule_auto_submit: bool = Field(default=True, description="Tự động bấm đăng")
+    schedule_headless: bool = Field(default=False, description="Chạy ngầm ẩn trình duyệt")
 
 class GeneratedReviewItem(BaseModelConfig):
     id: int | str
@@ -71,3 +79,12 @@ class ReviewScheduleResponse(BaseModelConfig):
     status_text: str | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class ReviewScheduleAutoCreate(BaseModelConfig):
+    business_id: str
+    start_at: datetime
+    min_interval_hours: int = Field(24, ge=1)
+    max_interval_hours: int = Field(48, ge=1)
+    auto_submit: bool = True
+    headless: bool = False

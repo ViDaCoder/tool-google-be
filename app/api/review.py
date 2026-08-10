@@ -263,12 +263,83 @@ async def generate_reviews(
             print(f"[Generate API Allocation Error] Failed to pre-allocate images: {gen_alloc_err}")
 
         # Gán trực tiếp từng Gmail khả dụng chưa dùng cho bài nháp tương ứng
+        # Đồng thời tự động đặt lịch đăng bài nếu auto_schedule = True
+        import uuid
+        import random
+        from datetime import timedelta
+        from app.models.schedule import ReviewSchedule
+        
+        do_schedule = request_data.auto_schedule
+        start_at = request_data.schedule_start_at
+        if do_schedule and start_at:
+            if start_at.tzinfo is not None:
+                start_at = start_at.astimezone().replace(tzinfo=None)
+            start_at = start_at.replace(second=0, microsecond=0)
+            if start_at <= datetime.now():
+                start_at = datetime.now() + timedelta(minutes=5)
+                start_at = start_at.replace(second=0, microsecond=0)
+        
+        # Lấy toàn bộ các mốc thời gian đang chờ (pending) trong hệ thống để tránh trùng lặp
+        sched_times_res = await db.execute(
+            select(ReviewSchedule.scheduled_at).where(ReviewSchedule.status == "pending")
+        )
+        booked_times = [row[0] for row in sched_times_res.all()]
+
+        current_scheduled_time = start_at
+        
         for idx, r in enumerate(reviews):
             if idx < len(fresh_gmails):
                 assigned_gmail = fresh_gmails[idx].email
                 r["gmail"] = assigned_gmail
                 r["proxy"] = proxy_map.get(assigned_gmail.lower(), "IP Máy chủ (Direct)")
-                r["status"] = "ready"
+                
+                if do_schedule and start_at:
+                    if idx > 0:
+                        random_hours = random.uniform(request_data.min_interval_hours, request_data.max_interval_hours)
+                        current_scheduled_time = current_scheduled_time + timedelta(hours=random_hours)
+                        current_scheduled_time = current_scheduled_time.replace(second=0, microsecond=0)
+                    
+                    # Đảm bảo không trùng lặp / quá sát (Collision Avoidance)
+                    temp_time = current_scheduled_time.replace(second=0, microsecond=0)
+                    while True:
+                        conflict = False
+                        for booked_time in booked_times:
+                            diff = abs((temp_time - booked_time.replace(second=0, microsecond=0)).total_seconds())
+                            if diff < 300:  # Khoảng cách tối thiểu 5 phút
+                                conflict = True
+                                break
+                        if conflict:
+                            temp_time = temp_time + timedelta(minutes=random.randint(5, 15))
+                        else:
+                            current_scheduled_time = temp_time
+                            booked_times.append(current_scheduled_time)
+                            break
+                    
+                    schedule_id = f"sched_{uuid.uuid4().hex[:16]}"
+                    new_schedule = ReviewSchedule(
+                        id=schedule_id,
+                        business_id=business.id,
+                        gmail=assigned_gmail,
+                        proxy=r["proxy"],
+                        rating=r.get("rating", 5),
+                        review_text=r.get("content", ""),
+                        images=r.get("images", []),
+                        scheduled_at=current_scheduled_time,
+                        auto_submit=request_data.schedule_auto_submit,
+                        headless=request_data.schedule_headless,
+                        status="pending",
+                        status_text=None,
+                        user_email=current_user.email,
+                        created_at=datetime.now(),
+                        updated_at=datetime.now()
+                    )
+                    db.add(new_schedule)
+                    
+                    r["status"] = "scheduled"
+                    r["statusText"] = current_scheduled_time.strftime('%d/%m/%Y %H:%M')
+                    r["scheduleId"] = schedule_id
+                else:
+                    r["status"] = "ready"
         
         await log_system_activity(
             db,
