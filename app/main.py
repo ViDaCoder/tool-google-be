@@ -45,6 +45,9 @@ async def lifespan(app: FastAPI):
                 )
             """))
             await db.execute(text("""
+                ALTER TABLE businesses ADD COLUMN IF NOT EXISTS image_folder VARCHAR(500);
+            """))
+            await db.execute(text("""
                 CREATE TABLE IF NOT EXISTS review_drafts (
                     id VARCHAR(100) PRIMARY KEY,
                     business_id VARCHAR(100) NOT NULL REFERENCES businesses(id) ON DELETE CASCADE,
@@ -138,6 +141,7 @@ async def lifespan(app: FastAPI):
                 from app.services.poster import auto_post_review
                 from app.models.history import ReviewHistory
                 from app.models.draft import ReviewDraft
+                from app.services.logs import log_system_activity
                 import uuid
                 
                 async with AsyncSessionLocal() as db:

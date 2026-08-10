@@ -18,42 +18,49 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
+    conn = op.get_bind()
+    inspector = sa.inspect(conn)
+    tables = inspector.get_table_names()
+
     # 1. Tạo bảng system_settings
-    op.create_table('system_settings',
-        sa.Column('key', sa.String(length=100), nullable=False),
-        sa.Column('value', sa.Text(), nullable=False),
-        sa.PrimaryKeyConstraint('key')
-    )
+    if 'system_settings' not in tables:
+        op.create_table('system_settings',
+            sa.Column('key', sa.String(length=100), nullable=False),
+            sa.Column('value', sa.Text(), nullable=False),
+            sa.PrimaryKeyConstraint('key')
+        )
 
     # 2. Tạo bảng gmail_proxies
-    op.create_table('gmail_proxies',
-        sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column('gmail_id', sa.Integer(), nullable=False),
-        sa.Column('proxy_id', sa.Integer(), nullable=False),
-        sa.Column('created_at', sa.DateTime(), nullable=False),
-        sa.Column('updated_at', sa.DateTime(), nullable=False),
-        sa.ForeignKeyConstraint(['gmail_id'], ['gmail_accounts.id'], ondelete='CASCADE'),
-        sa.ForeignKeyConstraint(['proxy_id'], ['proxies.id'], ondelete='CASCADE'),
-        sa.PrimaryKeyConstraint('id'),
-        sa.UniqueConstraint('gmail_id')
-    )
+    if 'gmail_proxies' not in tables:
+        op.create_table('gmail_proxies',
+            sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
+            sa.Column('gmail_id', sa.Integer(), nullable=False),
+            sa.Column('proxy_id', sa.Integer(), nullable=False),
+            sa.Column('created_at', sa.DateTime(), nullable=False),
+            sa.Column('updated_at', sa.DateTime(), nullable=False),
+            sa.ForeignKeyConstraint(['gmail_id'], ['gmail_accounts.id'], ondelete='CASCADE'),
+            sa.ForeignKeyConstraint(['proxy_id'], ['proxies.id'], ondelete='CASCADE'),
+            sa.PrimaryKeyConstraint('id'),
+            sa.UniqueConstraint('gmail_id')
+        )
 
     # 3. Tạo bảng review_drafts
-    op.create_table('review_drafts',
-        sa.Column('id', sa.String(length=100), nullable=False),
-        sa.Column('business_id', sa.String(length=100), nullable=False),
-        sa.Column('business_name', sa.String(length=255), nullable=False),
-        sa.Column('category', sa.String(length=255), nullable=True),
-        sa.Column('url', sa.Text(), nullable=True),
-        sa.Column('tone', sa.String(length=50), nullable=False),
-        sa.Column('language', sa.String(length=10), nullable=False),
-        sa.Column('length', sa.String(length=20), nullable=False),
-        sa.Column('custom_keywords', sa.JSON(), nullable=False),
-        sa.Column('reviews', sa.JSON(), nullable=False),
-        sa.Column('created_at', sa.DateTime(), nullable=False),
-        sa.ForeignKeyConstraint(['business_id'], ['businesses.id'], ondelete='CASCADE'),
-        sa.PrimaryKeyConstraint('id')
-    )
+    if 'review_drafts' not in tables:
+        op.create_table('review_drafts',
+            sa.Column('id', sa.String(length=100), nullable=False),
+            sa.Column('business_id', sa.String(length=100), nullable=False),
+            sa.Column('business_name', sa.String(length=255), nullable=False),
+            sa.Column('category', sa.String(length=255), nullable=True),
+            sa.Column('url', sa.Text(), nullable=True),
+            sa.Column('tone', sa.String(length=50), nullable=False),
+            sa.Column('language', sa.String(length=10), nullable=False),
+            sa.Column('length', sa.String(length=20), nullable=False),
+            sa.Column('custom_keywords', sa.JSON(), nullable=False),
+            sa.Column('reviews', sa.JSON(), nullable=False),
+            sa.Column('created_at', sa.DateTime(), nullable=False),
+            sa.ForeignKeyConstraint(['business_id'], ['businesses.id'], ondelete='CASCADE'),
+            sa.PrimaryKeyConstraint('id')
+        )
 
 
 def downgrade() -> None:
