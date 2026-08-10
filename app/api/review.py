@@ -477,7 +477,7 @@ async def get_business_drafts(
         latest_draft = drafts[0]
         if isinstance(latest_draft.reviews, list):
             all_reviews = latest_draft.reviews
-            
+
             # Tự động phân bổ tăng cường thêm hình ảnh mới nếu có hình mới xuất hiện trong thư mục
             if matched_biz:
                 try:
@@ -487,9 +487,17 @@ async def get_business_drafts(
                     import random
                     from sqlalchemy.orm.attributes import flag_modified
                     from app.models.history import ReviewHistory
-                    
+                    from app.services.gmail_proxy_service import get_gmail_proxy_map
+
+                    # Lấy bảng ánh xạ Proxy mới nhất cho các Gmail trong hệ thống
+                    gmail_proxy_map = await get_gmail_proxy_map(db)
+
                     # 1. Thu thập tất cả ảnh đã được dùng trước đó trong Lịch sử Đăng bài (ReviewHistory)
+                    # Đồng thời lưu danh sách Content đã đăng để kiểm tra bài ĐÃ ĐĂNG
                     used_images = set()
+                    posted_contents_set = set()
+                    posted_images_map = {}
+
                     hist_res = await db.execute(
                         select(ReviewHistory).where(ReviewHistory.business_id == matched_biz.id)
                     )
@@ -497,16 +505,56 @@ async def get_business_drafts(
                     for hr in history_records:
                         if isinstance(hr.reviews, list):
                             for r_item in hr.reviews:
-                                if isinstance(r_item, dict) and r_item.get("images"):
-                                    for img in r_item["images"]:
-                                        used_images.add(os.path.abspath(img).lower())
-                    
-                    # 2. Thu thập tất cả ảnh hiện đang có trong các bài nháp review
+                                if isinstance(r_item, dict):
+                                    g_email = (r_item.get("gmail") or "").strip().lower()
+                                    r_cont = (r_item.get("content") or "").strip()
+                                    if r_cont:
+                                        posted_contents_set.add(r_cont)
+                                    if r_item.get("images"):
+                                        p_imgs = [os.path.abspath(img).lower() for img in r_item["images"]]
+                                        for img in r_item["images"]:
+                                            used_images.add(os.path.abspath(img).lower())
+                                        if g_email:
+                                            posted_images_map[g_email] = set(p_imgs)
+
+                    # 2. Thu thập ảnh trong các bài nháp review CHƯA ĐĂNG
+                    # Đồng thời tự động cập nhật Proxy mới cho bài CHƯA ĐĂNG & dọn dẹp ảnh bị gán nhầm vào bài ĐÃ ĐĂNG
+                    has_changed = False
                     for r in all_reviews:
-                        if isinstance(r, dict) and r.get("images"):
-                            for img in r["images"]:
+                        if not isinstance(r, dict):
+                            continue
+
+                        r_gmail = (r.get("gmail") or "").strip().lower()
+                        r_content = (r.get("content") or "").strip()
+                        r_status = (r.get("status") or "")
+                        is_posted = (
+                            r_status == "success" or
+                            r.get("posted") is True or
+                            (r_content and r_content in posted_contents_set)
+                        )
+
+                        if is_posted:
+                            # Nếu bài đã đăng bị gán nhầm ảnh không có trong lịch sử đăng thực tế -> khôi phục lại
+                            if "images" in r and r["images"]:
+                                orig_images = posted_images_map.get(r_gmail, set())
+                                cleaned_images = [img for img in r["images"] if os.path.abspath(img).lower() in orig_images]
+                                if len(cleaned_images) != len(r["images"]):
+                                    r["images"] = cleaned_images
+                                    has_changed = True
+                            for img in r.get("images", []):
                                 used_images.add(os.path.abspath(img).lower())
-                    
+                        else:
+                            # Với bài CHƯA ĐĂNG: tự động đồng bộ Proxy mới nhất của Gmail nếu Proxy cũ đã hỏng/xóa/thay đổi
+                            if r_gmail:
+                                latest_proxy = gmail_proxy_map.get(r_gmail, "IP Máy chủ (Direct)") or "IP Máy chủ (Direct)"
+                                if r.get("proxy") != latest_proxy:
+                                    r["proxy"] = latest_proxy
+                                    has_changed = True
+
+                            if r.get("images"):
+                                for img in r["images"]:
+                                    used_images.add(os.path.abspath(img).lower())
+
                     # 3. Quét thư mục ảnh hinh_google của doanh nghiệp
                     all_available_images = []
                     hinh_google_root = r"C:\hinh_google"
@@ -517,7 +565,7 @@ async def get_business_drafts(
                         clean_biz_name = re.sub(r'[\\/*?:"<>|]', '', matched_biz.name).strip()
                         biz_dir = os.path.join(hinh_google_root, clean_biz_name)
                         biz_dir_raw = os.path.join(hinh_google_root, matched_biz.name.strip())
-                        
+
                         target_dir = None
                         if os.path.exists(biz_dir_snake) and os.path.isdir(biz_dir_snake):
                             target_dir = biz_dir_snake
@@ -525,52 +573,61 @@ async def get_business_drafts(
                             target_dir = biz_dir
                         elif os.path.exists(biz_dir_raw) and os.path.isdir(biz_dir_raw):
                             target_dir = biz_dir_raw
-                        
+
                         if target_dir:
                             for ext in ("*.jpg", "*.jpeg", "*.png", "*.webp", "*.bmp"):
                                 all_available_images.extend(glob.glob(os.path.join(target_dir, ext)))
                                 all_available_images.extend(glob.glob(os.path.join(target_dir, ext.upper())))
-                    
+
                     all_available_images = list(set([os.path.abspath(p) for p in all_available_images]))
                     new_unused_images = [p for p in all_available_images if p.lower() not in used_images]
-                    
+
                     if new_unused_images:
-                        print(f"[Sync API Allocation] Found {len(new_unused_images)} new unused images. Distributing to existing drafts...")
-                        has_changed = False
-                        
-                        # Phân bổ tăng cường vào các bài nháp hiện có
+                        print(f"[Sync API Allocation] Found {len(new_unused_images)} new unused images. Distributing ONLY to UNPOSTED drafts...")
+
+                        # Phân bổ tăng cường CHỈ vào các bài nháp CHƯA ĐĂNG
                         for r in all_reviews:
                             if not isinstance(r, dict):
                                 continue
+
+                            r_content = (r.get("content") or "").strip()
+                            r_status = (r.get("status") or "")
+                            is_posted = (
+                                r_status == "success" or
+                                r.get("posted") is True or
+                                (r_content and r_content in posted_contents_set)
+                            )
+
+                            # Bỏ qua tuyệt đối tất cả bài ĐÃ ĐĂNG
+                            if is_posted:
+                                continue
+
                             if "images" not in r:
                                 r["images"] = []
-                                
+
                             current_images = r["images"]
                             current_count = len(current_images)
-                            
+
                             if current_count < 4 and new_unused_images:
-                                # Quyết định ngẫu nhiên xem bài này sẽ kết thúc với bao nhiêu ảnh (1 đến 4)
-                                target_total = random.randint(1, 4)
-                                if target_total > current_count:
-                                    max_add = target_total - current_count
-                                    num_to_add = min(random.randint(1, max_add), len(new_unused_images))
-                                    selected_new_imgs = random.sample(new_unused_images, num_to_add)
-                                    
-                                    r["images"] = current_images + selected_new_imgs
-                                    has_changed = True
-                                    
-                                    # Đánh dấu đã sử dụng
-                                    for img in selected_new_imgs:
-                                        new_unused_images.remove(img)
-                                    
+                                max_add = 4 - current_count
+                                num_to_add = min(random.randint(1, max_add), len(new_unused_images))
+                                selected_new_imgs = random.sample(new_unused_images, num_to_add)
+
+                                r["images"] = current_images + selected_new_imgs
+                                has_changed = True
+
+                                # Đánh dấu đã sử dụng
+                                for img in selected_new_imgs:
+                                    new_unused_images.remove(img)
+
                             if not new_unused_images:
                                 break
-                                
-                        if has_changed:
-                            latest_draft.reviews = all_reviews
-                            flag_modified(latest_draft, "reviews")
-                            await db.commit()
-                            print("[Sync API Allocation] Successfully distributed new images and updated ReviewDraft in DB.")
+
+                    if has_changed:
+                        latest_draft.reviews = all_reviews
+                        flag_modified(latest_draft, "reviews")
+                        await db.commit()
+                        print("[Sync API Allocation] Successfully updated images for UNPOSTED reviews and saved to DB.")
                 except Exception as sync_alloc_err:
                     print(f"[Sync API Allocation Error] Failed to sync and allocate new images: {sync_alloc_err}")
 
