@@ -402,6 +402,102 @@ async def get_business_drafts(
         latest_draft = drafts[0]
         if isinstance(latest_draft.reviews, list):
             all_reviews = latest_draft.reviews
+            
+            # Tự động phân bổ tăng cường thêm hình ảnh mới nếu có hình mới xuất hiện trong thư mục
+            if matched_biz:
+                try:
+                    import os
+                    import glob
+                    import re
+                    import random
+                    from sqlalchemy.orm.attributes import flag_modified
+                    from app.models.history import ReviewHistory
+                    
+                    # 1. Thu thập tất cả ảnh đã được dùng trước đó trong Lịch sử Đăng bài (ReviewHistory)
+                    used_images = set()
+                    hist_res = await db.execute(
+                        select(ReviewHistory).where(ReviewHistory.business_id == matched_biz.id)
+                    )
+                    history_records = hist_res.scalars().all()
+                    for hr in history_records:
+                        if isinstance(hr.reviews, list):
+                            for r_item in hr.reviews:
+                                if isinstance(r_item, dict) and r_item.get("images"):
+                                    for img in r_item["images"]:
+                                        used_images.add(os.path.abspath(img).lower())
+                    
+                    # 2. Thu thập tất cả ảnh hiện đang có trong các bài nháp review
+                    for r in all_reviews:
+                        if isinstance(r, dict) and r.get("images"):
+                            for img in r["images"]:
+                                used_images.add(os.path.abspath(img).lower())
+                    
+                    # 3. Quét thư mục ảnh hinh_google của doanh nghiệp
+                    all_available_images = []
+                    hinh_google_root = r"C:\hinh_google"
+                    if os.path.exists(hinh_google_root):
+                        from app.services.poster import to_unsigned_snake_case
+                        clean_snake_name = to_unsigned_snake_case(matched_biz.name)
+                        biz_dir_snake = os.path.join(hinh_google_root, clean_snake_name)
+                        clean_biz_name = re.sub(r'[\\/*?:"<>|]', '', matched_biz.name).strip()
+                        biz_dir = os.path.join(hinh_google_root, clean_biz_name)
+                        biz_dir_raw = os.path.join(hinh_google_root, matched_biz.name.strip())
+                        
+                        target_dir = None
+                        if os.path.exists(biz_dir_snake) and os.path.isdir(biz_dir_snake):
+                            target_dir = biz_dir_snake
+                        elif os.path.exists(biz_dir) and os.path.isdir(biz_dir):
+                            target_dir = biz_dir
+                        elif os.path.exists(biz_dir_raw) and os.path.isdir(biz_dir_raw):
+                            target_dir = biz_dir_raw
+                        
+                        if target_dir:
+                            for ext in ("*.jpg", "*.jpeg", "*.png", "*.webp", "*.bmp"):
+                                all_available_images.extend(glob.glob(os.path.join(target_dir, ext)))
+                                all_available_images.extend(glob.glob(os.path.join(target_dir, ext.upper())))
+                    
+                    all_available_images = list(set([os.path.abspath(p) for p in all_available_images]))
+                    new_unused_images = [p for p in all_available_images if p.lower() not in used_images]
+                    
+                    if new_unused_images:
+                        print(f"[Sync API Allocation] Found {len(new_unused_images)} new unused images. Distributing to existing drafts...")
+                        has_changed = False
+                        
+                        # Phân bổ tăng cường vào các bài nháp hiện có
+                        for r in all_reviews:
+                            if not isinstance(r, dict):
+                                continue
+                            if "images" not in r:
+                                r["images"] = []
+                                
+                            current_images = r["images"]
+                            current_count = len(current_images)
+                            
+                            if current_count < 4 and new_unused_images:
+                                # Quyết định ngẫu nhiên xem bài này sẽ kết thúc với bao nhiêu ảnh (1 đến 4)
+                                target_total = random.randint(1, 4)
+                                if target_total > current_count:
+                                    max_add = target_total - current_count
+                                    num_to_add = min(random.randint(1, max_add), len(new_unused_images))
+                                    selected_new_imgs = random.sample(new_unused_images, num_to_add)
+                                    
+                                    r["images"] = current_images + selected_new_imgs
+                                    has_changed = True
+                                    
+                                    # Đánh dấu đã sử dụng
+                                    for img in selected_new_imgs:
+                                        new_unused_images.remove(img)
+                                    
+                            if not new_unused_images:
+                                break
+                                
+                        if has_changed:
+                            latest_draft.reviews = all_reviews
+                            flag_modified(latest_draft, "reviews")
+                            await db.commit()
+                            print("[Sync API Allocation] Successfully distributed new images and updated ReviewDraft in DB.")
+                except Exception as sync_alloc_err:
+                    print(f"[Sync API Allocation Error] Failed to sync and allocate new images: {sync_alloc_err}")
 
         # Tự động dọn dẹp các bản ghi nháp rác dư thừa nếu có
         if len(drafts) > 1:

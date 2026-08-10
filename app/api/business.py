@@ -123,7 +123,7 @@ async def parse_business(
         if extracted_name:
             try:
                 resolved = await llm_client.resolve_business_details(extracted_name, coordinates)
-                if resolved["name"] and resolved["address"]:
+                if resolved["name"]:
                     # Điền các trường id và place_id giống như scraper
                     place_id = "ChIJ" + hashlib.md5(clean_url.encode("utf-8")).hexdigest()[:16].upper()
                     biz_id = "biz_" + hashlib.md5(resolved["name"].encode("utf-8")).hexdigest()[:10]
@@ -133,7 +133,7 @@ async def parse_business(
                         "url": clean_url,
                         "name": resolved["name"],
                         "category": resolved["category"],
-                        "address": resolved["address"],
+                        "address": "",
                         "rating_score": resolved["rating_score"],
                         "review_count": resolved["review_count"],
                         "raw_reviews_sample": resolved["raw_reviews_sample"]

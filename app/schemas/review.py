@@ -43,3 +43,31 @@ class ReviewHistoryResponse(BaseModelConfig):
     custom_keywords: list[str]
     reviews: list[GeneratedReviewItem]
     created_at: datetime
+
+class ReviewScheduleCreate(BaseModelConfig):
+    business_id: str
+    gmail: str
+    proxy: str
+    rating: int = 5
+    review_text: str
+    images: list[str] = []
+    scheduled_at: datetime
+    auto_submit: bool = True
+    headless: bool = False
+
+class ReviewScheduleResponse(BaseModelConfig):
+    id: str
+    business_id: str
+    business_name: str
+    gmail: str
+    proxy: str
+    rating: int
+    review_text: str
+    images: list[str]
+    scheduled_at: datetime
+    auto_submit: bool
+    headless: bool
+    status: str
+    status_text: str | None = None
+    created_at: datetime
+    updated_at: datetime

@@ -56,7 +56,7 @@ class HttpRequestScraper(BaseScraper):
             "Accept-Language": "vi-VN,vi;q=0.9,en-US;q=0.8,en;q=0.7",
         }
 
-        address = "Chưa xác định"
+        address = ""
         category = "Địa điểm"
         rating_score = 5.0
         review_count = 10
@@ -71,15 +71,6 @@ class HttpRequestScraper(BaseScraper):
                     for s in snippets:
                         t = s.get_text(strip=True)
                         raw_snippets.append(t)
-                        
-                        # Match địa chỉ chính xác
-                        m = re.search(r'(?:ở đâu\?\s*|Địa chỉ\s*[:\?]?\s*)([0-9]{1,4}[A-Za-zÀ-ỹ0-9\s,/\.\-]+?(?:Phường|Quận|Huyện|Cần Thơ|Hà Nội|Hồ Chí Minh|Việt Nam|Vietnam))', t)
-                        if m and address == "Chưa xác định":
-                            address = m.group(1).strip()
-                        elif address == "Chưa xác định":
-                            m2 = re.search(r'([0-9]{1,4}[A-Za-zÀ-ỹ0-9\s,/\.\-]+?(?:Phường|Quận|Huyện|Cần Thơ|Hà Nội|Hồ Chí Minh|Việt Nam|Vietnam))', t)
-                            if m2:
-                                address = m2.group(1).strip()
         except Exception as http_err:
             print(f"[HTTP Scraper Warning] Search HTTP error: {http_err}")
 

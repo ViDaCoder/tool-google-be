@@ -7,3 +7,5 @@ from app.models.history import ReviewHistory
 from app.models.draft import ReviewDraft
 from app.models.log import SystemLog
 from app.models.gmail_proxy import GmailProxy
+from app.models.schedule import ReviewSchedule
+

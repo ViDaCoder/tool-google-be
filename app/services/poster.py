@@ -134,38 +134,93 @@ def smooth_move_mouse_with_cursor(page, target_x, target_y, steps=65):
         dy = target_y - start_y
         distance = math.sqrt(dx*dx + dy*dy)
         
+        # Chọn ngẫu nhiên loại quỹ đạo di chuyển (chữ C, chữ S hoặc lượn sóng)
+        curve_type = "quadratic"
+        if distance > 30:
+            curve_type = random.choice(["quadratic", "cubic", "wavy"])
+            
+        # Chuẩn bị các tham số cho từng loại quỹ đạo
         if distance > 10:
-            # Lấy vector vuông góc vuông hướng với đường nối thẳng để làm điểm uốn cong
             px = -dy
             py = dx
-            # Chuẩn hóa vector vuông góc
             nx = px / distance
             ny = py / distance
-            # Biên độ lệch ngẫu nhiên tạo độ võng (khoảng 40px đến 120px)
-            deviation = random.choice([-1, 1]) * random.randint(40, min(120, int(distance * 0.4) + 10))
             
-            ctrl_x = mid_x + nx * deviation
-            ctrl_y = mid_y + ny * deviation
+            if curve_type == "quadratic":
+                # Điểm uốn cho đường cong Bézier bậc 2 (chữ C)
+                deviation = random.choice([-1, 1]) * random.randint(40, min(120, int(distance * 0.4) + 10))
+                ctrl_x = mid_x + nx * deviation
+                ctrl_y = mid_y + ny * deviation
+            elif curve_type == "cubic":
+                # 2 Điểm uốn đối xứng cho đường cong Bézier bậc 3 (chữ S)
+                pt1_x = start_x + dx * 0.33
+                pt1_y = start_y + dy * 0.33
+                pt2_x = start_x + dx * 0.66
+                pt2_y = start_y + dy * 0.66
+                
+                dev1 = random.randint(30, min(100, int(distance * 0.3) + 10))
+                dev2 = random.randint(30, min(100, int(distance * 0.3) + 10))
+                side = random.choice([-1, 1])
+                
+                ctrl1_x = pt1_x + nx * (side * dev1)
+                ctrl1_y = pt1_y + ny * (side * dev1)
+                ctrl2_x = pt2_x + nx * (-side * dev2)
+                ctrl2_y = pt2_y + ny * (-side * dev2)
+            else:
+                # Đường lượn sóng sine
+                cycles = random.choice([1, 2])
+                wave_amplitude = random.randint(10, 25)
         else:
             ctrl_x = mid_x
             ctrl_y = mid_y
 
-        # Thực hiện trượt chuột ảo và cập nhật chấm đỏ theo đường cong Bezier
+        # Thực hiện trượt chuột ảo và cập nhật chấm đỏ theo quỹ đạo đã chọn
         for i in range(1, steps + 1):
-            t = i / steps
-            # Công thức đường cong Bezier bậc 2
-            curr_x = (1 - t)**2 * start_x + 2 * (1 - t) * t * ctrl_x + t**2 * target_x
-            curr_y = (1 - t)**2 * start_y + 2 * (1 - t) * t * ctrl_y + t**2 * target_y
+            progress = i / steps
             
-            # 1. Di chuyển con trỏ chuột ảo của Playwright
+            # 1. Hàm Easing Cubic Ease-In-Out (Nhanh dần ở giữa, chậm dần ở 2 đầu đặc biệt là khi tới đích)
+            if progress < 0.5:
+                t = 4 * progress**3
+            else:
+                t = 1 - (-2 * progress + 2)**3 / 2
+                
+            # 2. Rung tay vật lý ngẫu nhiên (Jitter) - giảm dần biên độ khi chuột tiến sát vào tâm mục tiêu
+            jitter_scale = (1 - t) * 1.8  # Biên độ rung tối đa 1.8 pixel
+            jitter_x = random.uniform(-jitter_scale, jitter_scale)
+            jitter_y = random.uniform(-jitter_scale, jitter_scale)
+            
+            # 3. Tính toán tọa độ dựa trên quỹ đạo di chuyển được chọn
+            if curve_type == "quadratic" or distance <= 10:
+                # Công thức Bézier bậc 2 (chữ C)
+                curr_x = (1 - t)**2 * start_x + 2 * (1 - t) * t * ctrl_x + t**2 * target_x + jitter_x
+                curr_y = (1 - t)**2 * start_y + 2 * (1 - t) * t * ctrl_y + t**2 * target_y + jitter_y
+            elif curve_type == "cubic":
+                # Công thức Bézier bậc 3 (chữ S)
+                curr_x = (1 - t)**3 * start_x + 3 * (1 - t)**2 * t * ctrl1_x + 3 * (1 - t) * t**2 * ctrl2_x + t**3 * target_x + jitter_x
+                curr_y = (1 - t)**3 * start_y + 3 * (1 - t)**2 * t * ctrl1_y + 3 * (1 - t) * t**2 * ctrl2_y + t**3 * target_y + jitter_y
+            else:
+                # Công thức lượn sóng Sine
+                base_x = (1 - t) * start_x + t * target_x
+                base_y = (1 - t) * start_y + t * target_y
+                wave_offset = math.sin(t * math.pi * cycles) * wave_amplitude * (1 - t) # Biên độ giảm dần khi tới gần đích
+                curr_x = base_x + nx * wave_offset + jitter_x
+                curr_y = base_y + ny * wave_offset + jitter_y
+            
+            # 4. Di chuyển con trỏ chuột ảo của Playwright
             page.mouse.move(curr_x, curr_y)
             
-            # 2. Đồng bộ hóa trực tiếp chấm đỏ
+            # 5. Đồng bộ hóa trực tiếp chấm đỏ
             try:
                 page.evaluate(f"if (window.updatePlaywrightCursor) window.updatePlaywrightCursor({curr_x}, {curr_y});")
             except Exception:
                 pass
-            time.sleep(0.018) # Nghỉ 18ms tạo hiệu ứng trượt chậm rãi, tự nhiên và dễ quan sát
+                
+            # 6. Biến thiên thời gian trễ ngẫu nhiên (Sleep Variation) mô phỏng tốc độ biến thiên thực tế
+            base_sleep = 0.015
+            if progress < 0.15 or progress > 0.85:
+                base_sleep = 0.022
+            sleep_time = base_sleep + random.uniform(-0.003, 0.003)
+            time.sleep(max(0.005, sleep_time))
     except Exception as e:
         print(f"[Poster Native Warning] Smooth Bezier mouse move failed: {e}")
         page.mouse.move(target_x, target_y)
@@ -208,7 +263,8 @@ def _playwright_sync_post(
     content: str,
     images: list[str] = None,
     headless: bool = False,
-    business_name: str = ""
+    business_name: str = "",
+    auto_submit: bool = False
 ) -> bool:
     """
     Khởi chạy Google Chrome nguyên bản bằng subprocess cho tài khoản Gmail có sẵn để đăng bài.
@@ -225,6 +281,9 @@ def _playwright_sync_post(
         "--no-first-run",
         "--no-default-browser-check"
     ]
+
+    if headless:
+        cmd.append("--headless=new")
 
     if proxy_config and proxy_config.get("server"):
         clean_server = proxy_config["server"].replace("http://", "").replace("https://", "")
@@ -296,6 +355,77 @@ def _playwright_sync_post(
             except Exception as init_err:
                 print(f"[Poster Native Warning] Failed to add init script for red cursor: {init_err}")
 
+            # --- XÁC ĐỊNH CONTEXT CỦA POPUP (PAGE HOẶC IFRAME) ---
+            target_root = page
+            iframe_selector = 'iframe[name="goog-reviews-write-widget"], iframe.goog-reviews-write-widget'
+            dialog_selector = '[role="dialog"], g-dialog-content, .g-dialog-content'
+            
+            print("[Poster Native] Waiting for review form context to be ready...")
+            try:
+                # Đợi cho trang load xong DOM (tối đa 45 giây do Proxy có thể rất chậm)
+                try:
+                    page.wait_for_load_state("domcontentloaded", timeout=45000)
+                except Exception:
+                    pass
+                
+                found_context = False
+                # Chờ tối đa 30 giây để tìm thấy bất kỳ Iframe hoặc Dialog popup review xuất hiện
+                for check_sec in range(30):
+                    # 1. Kiểm tra xem iframe review có hiển thị chưa
+                    iframe_el = page.locator(iframe_selector).first
+                    if iframe_el.is_visible():
+                        print(f"[Poster Native] Found review iframe after {check_sec}s.")
+                        target_root = page.frame_locator(iframe_selector)
+                        found_context = True
+                        break
+                    
+                    # 2. Kiểm tra xem popup dialog trực tiếp trên trang chính đã xuất hiện chưa
+                    dialog_el = page.locator(dialog_selector).first
+                    if dialog_el.is_visible():
+                        print(f"[Poster Native] Found review popup dialog directly on page after {check_sec}s.")
+                        target_root = dialog_el
+                        found_context = True
+                        break
+                    
+                    time.sleep(1)
+                
+                # Để popup/iframe hiển thị đầy đủ và ổn định (1.5 giây) như khách hàng yêu cầu
+                time.sleep(1.5)
+                print("[Poster Native] Settle time of 1.5s completed.")
+                
+            except Exception as wait_err:
+                print(f"[Poster Native Warning] Error during review form visibility wait: {wait_err}")
+
+            # --- TẮT TOOLTIP HƯỚNG DẪN CỦA GOOGLE NẾU CÓ ---
+            try:
+                page.bring_to_front()
+                popup_box = None
+                
+                # Tìm bounding box của dialog trước
+                for sel in ['g-dialog-content', '[role="dialog"]', '.g-dialog-content']:
+                    el = page.locator(sel).first
+                    if el.is_visible():
+                        popup_box = el.bounding_box()
+                        break
+                
+                # Nếu không thấy dialog, tìm bounding box của iframe
+                if not popup_box:
+                    iframe_el = page.locator(iframe_selector).first
+                    if iframe_el.is_visible():
+                        popup_box = iframe_el.bounding_box()
+                        
+                if popup_box:
+                    # Tọa độ nhấp ngẫu nhiên một chút trong khu vực tiêu đề trống của dialog
+                    tx = popup_box["x"] + random.uniform(40, 80)
+                    ty = popup_box["y"] + random.uniform(20, 45)
+                    print(f"[Poster Native] Clicking popup empty space at ({tx}, {ty}) to dismiss Google tooltip...")
+                    smooth_move_mouse_with_cursor(page, tx, ty)
+                    time.sleep(random.uniform(0.8, 1.5))
+                    page.mouse.click(tx, ty)
+                    time.sleep(random.uniform(0.8, 1.5))
+            except Exception as tooltip_err:
+                print(f"[Poster Native Warning] Failed to click title to dismiss tooltip: {tooltip_err}")
+
             # --- PHẦN TỰ ĐỘNG HÓA TẢI HÌNH ẢNH LÊN ---
             # Sử dụng trực tiếp danh sách ảnh đã được lọc và phân bổ truyền từ ngoài vào
             image_paths = list(set([os.path.abspath(p) for p in images])) if images else []
@@ -322,53 +452,9 @@ def _playwright_sync_post(
                 upload_selector = ", ".join(upload_selectors)
                 
                 try:
-                    # Đợi cho trang load xong DOM (tối đa 45 giây do Proxy có thể rất chậm)
-                    try:
-                        print("[Poster Native] Waiting for page DOM content to load...")
-                        page.wait_for_load_state("domcontentloaded", timeout=45000)
-                    except Exception:
-                        print("[Poster Native Warning] Page load state timeout. Proceeding anyway...")
-
-                    # Đợi xem phần tử nào xuất hiện trước: Nút upload trực tiếp hoặc iframe (tối đa 45 giây)
-                    target_root = page
-                    iframe_selector = 'iframe[name="goog-reviews-write-widget"], iframe.goog-reviews-write-widget'
+                    # Tìm nút upload trong target_root đã được xác định ở trên
+                    upload_btn, matched_sel = find_upload_button(target_root)
                     
-                    found_target = False
-                    upload_btn = None
-                    print("[Poster Native] Waiting for upload button or review iframe to become visible...")
-                    for check_sec in range(45):
-                        # 1. Kiểm tra xem nút upload trực tiếp trên trang chính có hiển thị chưa
-                        upload_btn_main, matched_sel = find_upload_button(page)
-                        if upload_btn_main:
-                            print(f"[Poster Native] Found visible upload button directly on main page (selector: '{matched_sel}') after {check_sec}s.")
-                            target_root = page
-                            upload_btn = upload_btn_main
-                            found_target = True
-                            break
-                        
-                        # 2. Kiểm tra xem nút upload có hiển thị bên trong iframe hay chưa
-                        iframe_element = page.locator(iframe_selector).first
-                        if iframe_element.is_visible():
-                            iframe_root = page.frame_locator(iframe_selector)
-                            upload_btn_iframe, matched_sel = find_upload_button(iframe_root)
-                            if upload_btn_iframe:
-                                print(f"[Poster Native] Found visible upload button inside iframe (selector: '{matched_sel}') after {check_sec}s. Switching context...")
-                                target_root = iframe_root
-                                upload_btn = upload_btn_iframe
-                                found_target = True
-                                break
-                            
-                        time.sleep(1)
-                    
-                    if not found_target:
-                        print("[Poster Native Warning] Neither main page button nor visible iframe found after 45s. Running fallback scan on active popup...")
-                        # Thử quét iframe xem có thẻ input file không
-                        iframe_element = page.locator(iframe_selector).first
-                        if iframe_element.is_visible():
-                            target_root = page.frame_locator(iframe_selector)
-                        else:
-                            target_root = page
-                            
                     # --- THỰC HIỆN TẢI HÌNH ẢNH LÊN ---
                     # Chỉ quét tìm input[type="file"] nằm bên trong target_root (tránh quét Google Lens ở ngoài)
                     file_input = target_root.locator('input[type="file"]').first
@@ -388,31 +474,6 @@ def _playwright_sync_post(
                         # Đảm bảo trang được đưa lên trước và focus
                         page.bring_to_front()
                         
-                        # Click lên góc trên bên trái của Popup (X=left+50, Y=top+30) để tắt tooltip hướng dẫn nếu có
-                        try:
-                            popup_box = None
-                            if target_root == page:
-                                for sel in ['g-dialog-content', '[role="dialog"]', '.g-dialog-content']:
-                                    el = page.locator(sel).first
-                                    if el.is_visible():
-                                        popup_box = el.bounding_box()
-                                        break
-                            else:
-                                iframe_el = page.locator(iframe_selector).first
-                                if iframe_el.is_visible():
-                                    popup_box = iframe_el.bounding_box()
-                                    
-                            if popup_box:
-                                tx = popup_box["x"] + 50
-                                ty = popup_box["y"] + 30
-                                print(f"[Poster Native] Clicking popup empty space at ({tx}, {ty}) to dismiss Google tooltip...")
-                                smooth_move_mouse_with_cursor(page, tx, ty)
-                                time.sleep(random.uniform(1.0, 2.0)) # Nghỉ ngẫu nhiên 1-2s
-                                page.mouse.click(tx, ty)
-                                time.sleep(random.uniform(1.0, 2.0)) # Nghỉ ngẫu nhiên 1-2s
-                        except Exception as tooltip_err:
-                            print(f"[Poster Native Warning] Failed to click title to dismiss tooltip: {tooltip_err}")
-                        
                         # Nếu chưa có upload_btn thì quét tìm lại
                         if not upload_btn:
                             upload_btn, matched_sel = find_upload_button(target_root)
@@ -427,8 +488,9 @@ def _playwright_sync_post(
                         # Sử dụng cơ chế expect_file_chooser của Playwright để bắt sự kiện chọn file khi click nút
                         print("[Poster Native] Clicking 'Thêm ảnh và video' button and expecting file chooser...")
                         if box:
-                            x = box["x"] + box["width"] / 2
-                            y = box["y"] + box["height"] / 2
+                            # Nhấp ngẫu nhiên lệch trung tâm từ 25% đến 75% diện tích nút
+                            x = box["x"] + box["width"] * random.uniform(0.25, 0.75)
+                            y = box["y"] + box["height"] * random.uniform(0.25, 0.75)
                             print(f"[Poster Native] Sliding mouse smoothly to absolute coordinates ({x}, {y}) and clicking...")
                             
                             # Trượt chuột ảo mượt mà và cập nhật chấm đỏ độc lập
@@ -457,14 +519,19 @@ def _playwright_sync_post(
                 # 1. Chọn số sao
                 print(f"[Poster Native] Selecting star rating: {target_rating} stars...")
                 star_elements = target_root.locator('[role="radio"]').all()
-                if len(star_elements) == 5:
+                if len(star_elements) >= 5:
+                    num_groups = len(star_elements) // 5
+                    print(f"[Poster Native] Found {len(star_elements)} star radio buttons, grouped into {num_groups} rating rows.")
+                    
+                    # Click nhóm sao chính đầu tiên (chỉ số 0 đến 4)
                     star_idx = min(max(int(target_rating), 1), 5) - 1
                     target_star = star_elements[star_idx]
                     box_star = target_star.bounding_box()
                     if box_star:
-                        sx = box_star["x"] + box_star["width"] / 2
-                        sy = box_star["y"] + box_star["height"] / 2
-                        print(f"[Poster Native] Sliding mouse to star {target_rating} at ({sx}, {sy}) and clicking...")
+                        # Click lệch ngẫu nhiên 25% - 75% trên bề mặt ngôi sao chính
+                        sx = box_star["x"] + box_star["width"] * random.uniform(0.25, 0.75)
+                        sy = box_star["y"] + box_star["height"] * random.uniform(0.25, 0.75)
+                        print(f"[Poster Native] Sliding mouse to main star {target_rating} at ({sx}, {sy}) and clicking...")
                         smooth_move_mouse_with_cursor(page, sx, sy)
                         time.sleep(random.uniform(1.0, 2.0)) # Nghỉ ngẫu nhiên 1-2s trước khi click chọn sao
                         page.mouse.click(sx, sy)
@@ -472,6 +539,25 @@ def _playwright_sync_post(
                     else:
                         target_star.click(force=True)
                         time.sleep(random.uniform(1.0, 2.0))
+
+                    # Click các nhóm sao phụ (Đồ ăn, Dịch vụ, Bầu không khí...) nếu có
+                    for group_idx in range(1, num_groups):
+                        sub_star_idx = group_idx * 5 + star_idx
+                        if sub_star_idx < len(star_elements):
+                            sub_star = star_elements[sub_star_idx]
+                            box_sub = sub_star.bounding_box()
+                            if box_sub:
+                                # Click lệch ngẫu nhiên 25% - 75% trên bề mặt ngôi sao phụ
+                                sx = box_sub["x"] + box_sub["width"] * random.uniform(0.25, 0.75)
+                                sy = box_sub["y"] + box_sub["height"] * random.uniform(0.25, 0.75)
+                                print(f"[Poster Native] Sliding mouse to sub-rating row {group_idx} star {target_rating} at ({sx}, {sy}) and clicking...")
+                                smooth_move_mouse_with_cursor(page, sx, sy)
+                                time.sleep(random.uniform(0.6, 1.2)) # Nghỉ ngẫu nhiên giữa các dòng
+                                page.mouse.click(sx, sy)
+                                time.sleep(random.uniform(0.6, 1.2))
+                            else:
+                                sub_star.click(force=True)
+                                time.sleep(random.uniform(0.6, 1.2))
                 else:
                     # Fallback bằng aria-label
                     fallback_star_selectors = [
@@ -485,8 +571,9 @@ def _playwright_sync_post(
                             if star_el.is_visible():
                                 box_star = star_el.bounding_box()
                                 if box_star:
-                                    sx = box_star["x"] + box_star["width"] / 2
-                                    sy = box_star["y"] + box_star["height"] / 2
+                                    # Click lệch ngẫu nhiên trên bề mặt ngôi sao fallback
+                                    sx = box_star["x"] + box_star["width"] * random.uniform(0.25, 0.75)
+                                    sy = box_star["y"] + box_star["height"] * random.uniform(0.25, 0.75)
                                     smooth_move_mouse_with_cursor(page, sx, sy)
                                     time.sleep(random.uniform(1.0, 2.0))
                                     page.mouse.click(sx, sy)
@@ -520,8 +607,9 @@ def _playwright_sync_post(
                     if text_input:
                         box_text = text_input.bounding_box()
                         if box_text:
-                            tx = box_text["x"] + box_text["width"] / 2
-                            ty = box_text["y"] + box_text["height"] / 2
+                            # Điểm nhấp dao động ngẫu nhiên rộng rãi trên bề mặt của hộp Textarea nhập liệu
+                            tx = box_text["x"] + box_text["width"] * random.uniform(0.25, 0.75)
+                            ty = box_text["y"] + box_text["height"] * random.uniform(0.25, 0.75)
                             print(f"[Poster Native] Sliding mouse to text area at ({tx}, {ty}) and focusing...")
                             smooth_move_mouse_with_cursor(page, tx, ty)
                             time.sleep(random.uniform(1.0, 2.0)) # Nghỉ ngẫu nhiên 1-2s trước khi focus
@@ -540,17 +628,66 @@ def _playwright_sync_post(
                 print(f"[Poster Native Warning] Star selection or content typing failed: {input_err}")
             # ----------------------------------------
 
-            # Giữ trình duyệt mở cho người dùng tự do thao tác dán bài và đăng (Thoát ngay khi người dùng đóng Chrome)
-            for _ in range(600):
-                time.sleep(1)
+            # 3. Tự động click Đăng / Post nếu auto_submit = True
+            is_submitted = False
+            if auto_submit:
                 try:
-                    if proc.poll() is not None or page.is_closed() or not context.pages:
-                        print("[Poster Native] Chrome window closed by user.")
+                    print("[Poster Native] Auto submit is enabled. Finding Post button...")
+                    submit_selectors = [
+                        'button:has-text("Đăng")',
+                        'button:has-text("Post")',
+                        'button:has-text("Publish")',
+                        '[role="button"]:has-text("Đăng")',
+                        '[role="button"]:has-text("Post")',
+                        '[role="button"]:has-text("Publish")',
+                        'span:has-text("Đăng")',
+                        'span:has-text("Post")'
+                    ]
+                    submit_btn = None
+                    for sel in submit_selectors:
+                        try:
+                            btn = target_root.locator(sel).first
+                            if btn.is_visible():
+                                submit_btn = btn
+                                print(f"[Poster Native] Found visible submit button using selector: '{sel}'")
+                                break
+                        except Exception:
+                            pass
+                    
+                    if submit_btn:
+                        box_submit = submit_btn.bounding_box()
+                        if box_submit:
+                            # Điểm nhấp dao động ngẫu nhiên 25% - 75% trên diện tích nút Đăng
+                            sx = box_submit["x"] + box_submit["width"] * random.uniform(0.25, 0.75)
+                            sy = box_submit["y"] + box_submit["height"] * random.uniform(0.25, 0.75)
+                            print(f"[Poster Native] Sliding mouse to submit button at ({sx}, {sy}) and clicking...")
+                            smooth_move_mouse_with_cursor(page, sx, sy)
+                            time.sleep(random.uniform(1.5, 3.0)) # Nghỉ ngẫu nhiên trước khi click
+                            page.mouse.click(sx, sy)
+                        else:
+                            submit_btn.click(force=True)
+                        print("[Poster Native] Clicked submit button. Waiting 5s for completion...")
+                        time.sleep(5)
+                        is_submitted = True
+                    else:
+                        print("[Poster Native Warning] Submit button not found in active review popup context.")
+                except Exception as submit_err:
+                    print(f"[Poster Native Warning] Auto submit click failed: {submit_err}")
+
+            # Giữ trình duyệt mở cho người dùng tự do thao tác dán bài và đăng (Thoát ngay khi người dùng đóng Chrome)
+            if not is_submitted:
+                for _ in range(600):
+                    time.sleep(1)
+                    try:
+                        if proc.poll() is not None or page.is_closed() or not context.pages:
+                            print("[Poster Native] Chrome window closed by user.")
+                            break
+                        page.title()
+                    except Exception:
+                        print("[Poster Native] Detected browser close. Exiting loop.")
                         break
-                    page.title()
-                except Exception:
-                    print("[Poster Native] Detected browser close. Exiting loop.")
-                    break
+            else:
+                print("[Poster Native] Auto submitted successfully. Closing browser...")
 
             try:
                 browser.close()
@@ -569,7 +706,7 @@ def _playwright_sync_post(
         except Exception:
             pass
 
-    return False
+    return is_submitted
 
 
 async def auto_post_review(
@@ -584,7 +721,8 @@ async def auto_post_review(
     gmail: str = "reviewer.alpha01@gmail.com",
     proxy_str: str = None,
     images: list[str] = None,
-    headless: bool = False
+    headless: bool = False,
+    auto_submit: bool = False
 ) -> dict:
     """
     Dịch vụ mở trình duyệt trực quan trên Google Search & tự động kích hoạt Popup 'Viết bài đánh giá'.
@@ -741,7 +879,8 @@ async def auto_post_review(
             content,
             images,
             headless,
-            business_name
+            business_name,
+            auto_submit
         )
 
         if is_posted:
