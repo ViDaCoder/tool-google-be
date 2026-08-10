@@ -215,9 +215,11 @@ async def generate_reviews(
                         for img in r_item["images"]:
                             used_images.add(os.path.abspath(img).lower())
             
-            # 3. Quét thư mục hinh_google
+            # 3. Quét thư mục ảnh từ CSDL
             all_available_images = []
-            hinh_google_root = r"C:\hinh_google"
+            setting_res = await db.execute(select(SystemSetting).where(SystemSetting.key == "image_folder_path"))
+            setting_rec = setting_res.scalars().first()
+            hinh_google_root = (setting_rec.value if setting_rec and setting_rec.value else r"C:\hinh_google").strip()
             if os.path.exists(hinh_google_root):
                 clean_snake_name = to_unsigned_snake_case(business.name)
                 biz_dir_snake = os.path.join(hinh_google_root, clean_snake_name)
@@ -497,6 +499,7 @@ async def get_business_drafts(
                     used_images = set()
                     posted_contents_set = set()
                     posted_images_map = {}
+                    posted_content_gmail_map = {}
 
                     hist_res = await db.execute(
                         select(ReviewHistory).where(ReviewHistory.business_id == matched_biz.id)
@@ -506,16 +509,18 @@ async def get_business_drafts(
                         if isinstance(hr.reviews, list):
                             for r_item in hr.reviews:
                                 if isinstance(r_item, dict):
-                                    g_email = (r_item.get("gmail") or "").strip().lower()
+                                    g_email = (r_item.get("gmail") or "").strip()
                                     r_cont = (r_item.get("content") or "").strip()
                                     if r_cont:
                                         posted_contents_set.add(r_cont)
+                                        if g_email:
+                                            posted_content_gmail_map[r_cont] = g_email
                                     if r_item.get("images"):
                                         p_imgs = [os.path.abspath(img).lower() for img in r_item["images"]]
                                         for img in r_item["images"]:
                                             used_images.add(os.path.abspath(img).lower())
                                         if g_email:
-                                            posted_images_map[g_email] = set(p_imgs)
+                                            posted_images_map[g_email.lower()] = set(p_imgs)
 
                     # 2. Thu thập ảnh trong các bài nháp review CHƯA ĐĂNG
                     # Đồng thời tự động cập nhật Proxy mới cho bài CHƯA ĐĂNG & dọn dẹp ảnh bị gán nhầm vào bài ĐÃ ĐĂNG
@@ -534,6 +539,13 @@ async def get_business_drafts(
                         )
 
                         if is_posted:
+                            # Khôi phục đúng Gmail đã dùng trong lịch sử đăng thực tế
+                            actual_g = posted_content_gmail_map.get(r_content)
+                            if actual_g and r.get("gmail") != actual_g:
+                                r["gmail"] = actual_g
+                                has_changed = True
+                                r_gmail = actual_g.lower()
+
                             # Nếu bài đã đăng bị gán nhầm ảnh không có trong lịch sử đăng thực tế -> khôi phục lại
                             if "images" in r and r["images"]:
                                 orig_images = posted_images_map.get(r_gmail, set())
@@ -555,9 +567,13 @@ async def get_business_drafts(
                                 for img in r["images"]:
                                     used_images.add(os.path.abspath(img).lower())
 
-                    # 3. Quét thư mục ảnh hinh_google của doanh nghiệp
+                    # 3. Quét thư mục ảnh của doanh nghiệp (đọc động từ CSDL)
                     all_available_images = []
-                    hinh_google_root = r"C:\hinh_google"
+                    from app.models.settings import SystemSetting
+                    setting_res = await db.execute(select(SystemSetting).where(SystemSetting.key == "image_folder_path"))
+                    setting_rec = setting_res.scalars().first()
+                    hinh_google_root = (setting_rec.value if setting_rec and setting_rec.value else r"C:\hinh_google").strip()
+
                     if os.path.exists(hinh_google_root):
                         from app.services.poster import to_unsigned_snake_case
                         clean_snake_name = to_unsigned_snake_case(matched_biz.name)

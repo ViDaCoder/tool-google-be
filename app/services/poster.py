@@ -755,9 +755,12 @@ async def auto_post_review(
                                 for img in r_item["images"]:
                                     used_images.add(os.path.abspath(img).lower())
 
-                # 3. Quét tất cả các ảnh trong thư mục C:\hinh_google
+                # 3. Quét tất cả các ảnh trong thư mục cấu hình CSDL
                 all_available_images = []
-                hinh_google_root = r"C:\hinh_google"
+                from app.models.settings import SystemSetting
+                setting_res = await db.execute(select(SystemSetting).where(SystemSetting.key == "image_folder_path"))
+                setting_rec = setting_res.scalars().first()
+                hinh_google_root = (setting_rec.value if setting_rec and setting_rec.value else r"C:\hinh_google").strip()
                 if os.path.exists(hinh_google_root):
                     from app.services.poster import to_unsigned_snake_case
                     clean_snake_name = to_unsigned_snake_case(biz.name)

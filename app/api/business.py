@@ -191,11 +191,17 @@ async def parse_business(
             detail=f"Lỗi khi phân tích dữ liệu bằng Gemini AI: {str(e)}"
         )
 
-    # 5. Tính toán đường dẫn thư mục ảnh của doanh nghiệp trước khi lưu
+    # 5. Tính toán đường dẫn thư mục ảnh của doanh nghiệp từ cấu hình CSDL
     import os
     from app.services.poster import to_unsigned_snake_case
+    from app.models.settings import SystemSetting
+
+    setting_res = await db.execute(select(SystemSetting).where(SystemSetting.key == "image_folder_path"))
+    setting_rec = setting_res.scalars().first()
+    hinh_google_root = (setting_rec.value if setting_rec and setting_rec.value else r"C:\hinh_google").strip()
+
     folder_name = to_unsigned_snake_case(data["name"])
-    image_folder_path = os.path.join(r"C:\hinh_google", folder_name) if folder_name else None
+    image_folder_path = os.path.join(hinh_google_root, folder_name) if folder_name else None
 
     # 6. Lưu dữ liệu cào được và kết quả phân tích của AI vào Database
     if business:
