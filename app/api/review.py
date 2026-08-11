@@ -849,6 +849,8 @@ class PostAutoRequest(BaseModel):
     review_text: str
     images: list[str] = []
     record_history: bool = False
+    auto_submit: bool = True
+    headless: bool = False
 
 @router.post("/post-auto", status_code=status.HTTP_200_OK)
 async def post_review_auto_backend(
@@ -882,7 +884,9 @@ async def post_review_auto_backend(
         content=payload.review_text,
         gmail=payload.gmail,
         proxy_str=payload.proxy,
-        images=payload.images
+        images=payload.images,
+        headless=payload.headless,
+        auto_submit=payload.auto_submit
     )
 
     if not poster_res.get("success"):
