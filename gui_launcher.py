@@ -134,7 +134,7 @@ class ToolLauncherApp(tk.Tk):
         # 1. Khởi chạy Backend
         try:
             python_bin = VENV_PYTHON if os.path.exists(VENV_PYTHON) else "python"
-            be_cmd = [python_bin, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8000"]
+            be_cmd = [python_bin, "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
             no_window = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
             self.backend_proc = subprocess.Popen(
                 be_cmd,
