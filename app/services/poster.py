@@ -271,42 +271,113 @@ def _playwright_sync_post(
     Sử dụng chung 100% Profile & cấu hình với chức năng Nạp phiên giúp giữ trạng thái ĐÃ ĐĂNG NHẬP.
     Playwright kết nối ngầm qua Remote Debugging Port (CDP) để giám sát và mở trang review.
     """
+    import subprocess as _subprocess
     chrome_exe = get_chrome_path()
+    port = find_free_port()
 
-    playwright_proxy = None
+    # Xây dựng lệnh khởi chạy Chrome THẬT (giống hệt cách Nạp phiên trong gmail_auth.py)
+    cmd = [
+        chrome_exe,
+        f"--user-data-dir={user_data_dir}",
+        f"--remote-debugging-port={port}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-infobars",
+    ]
+
+    if headless:
+        cmd.append("--headless=new")
+
+    # Cấu hình Proxy qua flag của Chrome (không qua Playwright proxy param)
     if proxy_config and proxy_config.get("server"):
-        playwright_proxy = {
-            "server": proxy_config["server"]
-        }
-        if proxy_config.get("username"):
-            playwright_proxy["username"] = proxy_config["username"]
-        if proxy_config.get("password"):
-            playwright_proxy["password"] = proxy_config["password"]
+        clean_server = proxy_config["server"].replace("http://", "").replace("https://", "")
+        cmd.append(f"--proxy-server=http://{clean_server}")
 
-    print(f"[Poster Persistent Context] Launching Chrome context for target: {target_url} (Proxy: {playwright_proxy})...")
+    # Mở thẳng tới trang đích ngay từ đầu
+    cmd.append(target_url)
+
+    print(f"[Poster Native CDP] Launching native Chrome at port {port} for target: {target_url} (Proxy: {proxy_config.get('server') if proxy_config else 'Direct'})...")
+    proc = _subprocess.Popen(cmd)
+    time.sleep(2)  # Chờ Chrome khởi động
 
     with sync_playwright() as p:
+        browser = None
         try:
-            context = p.chromium.launch_persistent_context(
-                user_data_dir=user_data_dir,
-                executable_path=chrome_exe,
-                headless=headless,
-                proxy=playwright_proxy,
-                args=[
-                    "--no-first-run",
-                    "--no-default-browser-check",
-                    "--test-type",
-                    "--disable-infobars"
-                ]
-            )
+            # Kết nối qua CDP - giống hệt cách Nạp phiên
+            for attempt in range(10):
+                try:
+                    browser = p.chromium.connect_over_cdp(f"http://localhost:{port}")
+                    print(f"[Poster Native CDP] Connected to Chrome via CDP on port {port} (attempt {attempt + 1})")
+                    break
+                except Exception as cdp_err:
+                    print(f"[Poster Native CDP] CDP connection attempt {attempt + 1} failed: {cdp_err}")
+                    time.sleep(1)
 
-            page = context.pages[0] if context.pages else context.new_page()
+            if not browser:
+                raise Exception(f"Cannot connect to Chrome via CDP on port {port} after 10 attempts.")
 
+            context = browser.contexts[0]
+
+            # Lấy page đang ở target_url hoặc mở tab mới
+            page = None
+            for pg in context.pages:
+                if target_url[:30] in pg.url or pg.url in ("about:blank", ""):
+                    page = pg
+                    break
+            if page is None:
+                page = context.new_page()
+
+            # Tự động xác thực Proxy qua CDP Fetch API (tránh Chrome hiện dialog Sign in thủ công)
+            # Cần thiết khi proxy có username/password và Chrome được mở bằng subprocess (không qua Playwright proxy param)
+            if proxy_config and proxy_config.get("username") and proxy_config.get("password"):
+                try:
+                    cdp_session = context.new_cdp_session(page)
+                    cdp_session.send("Fetch.enable", {
+                        "handleAuthRequests": True,
+                        "patterns": [{"urlPattern": "*"}]
+                    })
+
+                    proxy_user = proxy_config.get("username", "")
+                    proxy_pass = proxy_config.get("password", "")
+
+                    def on_auth_required(event):
+                        try:
+                            request_id = event["requestId"]
+                            cdp_session.send("Fetch.continueWithAuth", {
+                                "requestId": request_id,
+                                "authChallengeResponse": {
+                                    "response": "ProvideCredentials",
+                                    "username": proxy_user,
+                                    "password": proxy_pass
+                                }
+                            })
+                            print(f"[Poster Native CDP] Auto-filled proxy auth for requestId: {request_id}")
+                        except Exception as auth_err:
+                            print(f"[Poster Native CDP] Proxy auth fill error: {auth_err}")
+
+                    def on_request_paused(event):
+                        try:
+                            request_id = event["requestId"]
+                            cdp_session.send("Fetch.continueRequest", {"requestId": request_id})
+                        except Exception:
+                            pass
+
+                    cdp_session.on("Fetch.authRequired", on_auth_required)
+                    cdp_session.on("Fetch.requestPaused", on_request_paused)
+                    print(f"[Poster Native CDP] Proxy auth interception enabled for user: {proxy_user}")
+                except Exception as proxy_auth_err:
+                    print(f"[Poster Native CDP] Could not set up proxy auth interception: {proxy_auth_err}")
+
+            # Điều hướng nếu tab chưa ở đúng URL
             try:
-                print(f"[Poster Persistent Context] Navigating to target URL: {target_url}")
-                page.goto(target_url, timeout=45000)
+                if page.url != target_url and not page.url.startswith("https://www.google.com/search"):
+                    print(f"[Poster Native CDP] Navigating to target URL: {target_url}")
+                    page.goto(target_url, wait_until="domcontentloaded", timeout=45000)
+                else:
+                    print(f"[Poster Native CDP] Already on target page: {page.url}")
             except Exception as nav_err:
-                print(f"[Poster Persistent Context] Initial navigation warning: {nav_err}")
+                print(f"[Poster Native CDP] Initial navigation warning: {nav_err}")
+
 
             # Đăng ký tự động tiêm con trỏ chuột màu đỏ khi điều hướng trang (Hỗ trợ cả trong và ngoài iframe)
             try:
@@ -655,8 +726,8 @@ def _playwright_sync_post(
                             page.mouse.click(sx, sy)
                         else:
                             submit_btn.click(force=True)
-                        print("[Poster Native] Clicked submit button. Waiting 5s for completion...")
-                        time.sleep(5)
+                        print("[Poster Native] Clicked submit button. Waiting 30s for Google to process submission...")
+                        time.sleep(30)
                         is_submitted = True
                     else:
                         print("[Poster Native Warning] Submit button not found in active review popup context.")
@@ -668,25 +739,37 @@ def _playwright_sync_post(
                 for _ in range(600):
                     time.sleep(1)
                     try:
-                        if page.is_closed() or not context.pages:
-                            print("[Poster Native] Chrome window closed by user.")
+                        if proc.poll() is not None or page.is_closed() or not context.pages:
+                            print("[Poster Native CDP] Chrome window closed by user.")
                             break
                         page.title()
                     except Exception:
-                        print("[Poster Native] Detected browser close. Exiting loop.")
+                        print("[Poster Native CDP] Detected browser close. Exiting loop.")
                         break
             else:
-                print("[Poster Native] Finished task. Closing browser context...")
+                print("[Poster Native CDP] Finished task. Disconnecting browser...")
 
             try:
-                context.close()
+                browser.disconnect()
             except Exception:
                 pass
 
         except Exception as p_err:
-            print(f"[Poster Native Error] Playwright execution error: {p_err}")
+            print(f"[Poster Native CDP Error] Playwright execution error: {p_err}")
+
+        finally:
+            # Đảm bảo tiến trình Chrome luôn được đóng sạch khi xong việc
+            try:
+                proc.terminate()
+                proc.wait(timeout=3)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
 
     return is_submitted
+
 
 
 async def auto_post_review(

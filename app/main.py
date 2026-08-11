@@ -135,20 +135,75 @@ async def lifespan(app: FastAPI):
             try:
                 await asyncio.sleep(30)
                 print("[Background Scheduler] Checking for scheduled review posts...")
-                from datetime import datetime
+                from datetime import datetime, timedelta
                 from sqlalchemy.ext.asyncio import AsyncSession
                 from app.models.schedule import ReviewSchedule
                 from app.services.poster import auto_post_review
                 from app.models.history import ReviewHistory
                 from app.models.draft import ReviewDraft
                 from app.services.logs import log_system_activity
+                from sqlalchemy.orm.attributes import flag_modified as _flag_modified
                 import uuid
-                
+
                 async with AsyncSessionLocal() as db:
+                    now = datetime.now()
+
+                    # --- BƯỚC 1: Tự động huỷ lịch đăng bị quá hạn ---
+                    # Ngưỡng: lịch pending có scheduled_at < (now - 60s) được coi là "bị bỏ lỡ"
+                    # (60s = 2 chu kỳ worker, tránh huỷ nhầm lịch vừa đến hạn đang chuẩn bị chạy)
+                    overdue_cutoff = now - timedelta(seconds=60)
+                    overdue_result = await db.execute(
+                        select(ReviewSchedule).where(
+                            ReviewSchedule.status == "pending",
+                            ReviewSchedule.scheduled_at < overdue_cutoff
+                        )
+                    )
+                    overdue_schedules = overdue_result.scalars().all()
+
+                    if overdue_schedules:
+                        print(f"[Background Scheduler] Found {len(overdue_schedules)} overdue schedules to auto-cancel.")
+                        for sched in overdue_schedules:
+                            sched.status = "cancelled"
+                            sched.status_text = f"Tự động huỷ do quá hạn (giờ hẹn: {sched.scheduled_at.strftime('%d/%m/%Y %H:%M')})."
+
+                            # Đồng bộ bài nháp về trạng thái "ready"
+                            try:
+                                draft_res = await db.execute(
+                                    select(ReviewDraft).where(ReviewDraft.business_id == sched.business_id)
+                                )
+                                draft = draft_res.scalars().first()
+                                if draft and isinstance(draft.reviews, list):
+                                    updated_reviews = []
+                                    for r in draft.reviews:
+                                        if r.get("scheduleId") == sched.id or (
+                                            r.get("gmail") and r.get("gmail", "").lower() == sched.gmail.lower()
+                                            and r.get("status") == "scheduled"
+                                        ):
+                                            r["status"] = "ready"
+                                            r["statusText"] = None
+                                            if "scheduleId" in r:
+                                                del r["scheduleId"]
+                                        updated_reviews.append(r)
+                                    draft.reviews = updated_reviews
+                                    _flag_modified(draft, "reviews")
+                            except Exception as draft_err:
+                                print(f"[Background Scheduler] Error syncing draft for overdue sched {sched.id}: {draft_err}")
+
+                            await log_system_activity(
+                                db,
+                                "Tự động huỷ lịch đăng quá hạn",
+                                f"Hệ thống tự động huỷ lịch đăng review ID {sched.id} qua Gmail {sched.gmail} do quá hạn (giờ hẹn: {sched.scheduled_at}).",
+                                "info"
+                            )
+
+                        await db.commit()
+
+                    # --- BƯỚC 2: Chạy các lịch đúng hẹn (trong 60s gần nhất) ---
                     result = await db.execute(
                         select(ReviewSchedule).where(
                             ReviewSchedule.status == "pending",
-                            ReviewSchedule.scheduled_at <= datetime.now()
+                            ReviewSchedule.scheduled_at <= now,
+                            ReviewSchedule.scheduled_at >= overdue_cutoff
                         )
                     )
                     due_schedules = result.scalars().all()
