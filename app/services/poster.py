@@ -329,6 +329,7 @@ def _playwright_sync_post(
 
             # Tự động xác thực Proxy qua CDP Fetch API (tránh Chrome hiện dialog Sign in thủ công)
             # Cần thiết khi proxy có username/password và Chrome được mở bằng subprocess (không qua Playwright proxy param)
+            cdp_session = None
             if proxy_config and proxy_config.get("username") and proxy_config.get("password"):
                 try:
                     cdp_session = context.new_cdp_session(page)
@@ -377,6 +378,15 @@ def _playwright_sync_post(
                     print(f"[Poster Native CDP] Already on target page: {page.url}")
             except Exception as nav_err:
                 print(f"[Poster Native CDP] Initial navigation warning: {nav_err}")
+
+            # Tắt cờ Fetch.enable ngay sau khi nạp xong trang để giải phóng cờ DevTools Interception trước khi điền form
+            if cdp_session:
+                try:
+                    time.sleep(1)
+                    cdp_session.send("Fetch.disable")
+                    print("[Poster Native CDP] Disabled Fetch interception after page load successfully.")
+                except Exception as disable_err:
+                    print(f"[Poster Native CDP] Warning disabling Fetch interception: {disable_err}")
 
 
             # Đăng ký tự động tiêm con trỏ chuột màu đỏ khi điều hướng trang (Hỗ trợ cả trong và ngoài iframe)
