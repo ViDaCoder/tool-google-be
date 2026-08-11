@@ -27,6 +27,7 @@ from app.api.settings import router as settings_router
 from app.api.history import router as history_router
 from app.api.admin_logs import router as admin_logs_router
 from app.api.schedule import router as schedule_router
+from app.api.media import router as media_router
 
 # Cơ chế Lifespan thay thế cho startup/shutdown events
 @asynccontextmanager
@@ -384,6 +385,7 @@ app.include_router(schedule_router, prefix="/api/v1")
 app.include_router(settings_router, prefix="/api/v1")
 app.include_router(history_router, prefix="/api/v1")
 app.include_router(admin_logs_router, prefix="/api/v1")
+app.include_router(media_router, prefix="/api/v1")
 
 @app.get("/", tags=["System"])
 async def root():
