@@ -89,7 +89,7 @@ class ToolLauncherApp(tk.Tk):
 
         btn_open_web = tk.Button(
             toolbar, 
-            text="🌐 Mở Trang Web (http://localhost:5173)", 
+            text="🌐 Mở Trang Web (http://localhost:3000)", 
             command=self.open_web,
             bg="#89b4fa", 
             fg="#11111b", 
@@ -126,7 +126,7 @@ class ToolLauncherApp(tk.Tk):
         self.log_area.see(tk.END)
 
     def open_web(self):
-        webbrowser.open("http://localhost:5173")
+        webbrowser.open("http://localhost:3000")
 
     def start_services(self):
         self.log("🚀 Đang khởi động Backend FastAPI & Frontend React...")
@@ -155,7 +155,12 @@ class ToolLauncherApp(tk.Tk):
 
         # 2. Khởi chạy Frontend
         try:
-            fe_cmd = "npm run dev"
+            build_dir = os.path.join(FE_DIR, "build")
+            if not os.path.exists(build_dir):
+                fe_cmd = "npm run build && npm run start"
+            else:
+                fe_cmd = "npm run start"
+
             no_window = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
             self.frontend_proc = subprocess.Popen(
                 fe_cmd,
@@ -169,7 +174,7 @@ class ToolLauncherApp(tk.Tk):
                 bufsize=1,
                 creationflags=no_window
             )
-            self.status_fe.config(text="Frontend: 🟢 Đang chạy (5173)", fg="#a6e3a1")
+            self.status_fe.config(text="Frontend: 🟢 Đang chạy (3000)", fg="#a6e3a1")
             threading.Thread(target=self.read_output, args=(self.frontend_proc, "[Frontend]"), daemon=True).start()
         except Exception as e:
             self.log(f"❌ Lỗi khởi chạy Frontend: {e}")
