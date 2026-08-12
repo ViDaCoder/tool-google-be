@@ -564,7 +564,11 @@ async def get_business_drafts(
                                     has_changed = True
 
                             if r.get("images"):
-                                for img in r["images"]:
+                                existing_imgs = [img for img in r["images"] if os.path.exists(img)]
+                                if len(existing_imgs) != len(r["images"]):
+                                    r["images"] = existing_imgs
+                                    has_changed = True
+                                for img in r.get("images", []):
                                     used_images.add(os.path.abspath(img).lower())
 
                     # 3. Quét thư mục ảnh của doanh nghiệp (đọc động từ CSDL)
@@ -873,6 +877,8 @@ async def post_review_auto_backend(
     # 1. Gọi dịch vụ tự động hóa ngầm Playwright Python
     from app.services.poster import auto_post_review
 
+    valid_images = [img for img in (payload.images or []) if os.path.exists(img)]
+
     poster_res = await auto_post_review(
         db=db,
         user_email=current_user.email,
@@ -884,7 +890,7 @@ async def post_review_auto_backend(
         content=payload.review_text,
         gmail=payload.gmail,
         proxy_str=payload.proxy,
-        images=payload.images,
+        images=valid_images,
         headless=payload.headless,
         auto_submit=payload.auto_submit
     )

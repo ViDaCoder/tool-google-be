@@ -125,7 +125,22 @@ class GeminiClient(BaseLLMClient):
         all_reviews = []
         kw_text = f"BẮT BUỘC phải chèn một cách tự nhiên các từ khóa sau vào bài viết: {', '.join(focus_keywords)}" if focus_keywords else "Không yêu cầu từ khóa đặc biệt."
 
+        length_map = {
+            "short": "RẤT NGẮN (BẮT BUỘC tối đa từ 1 đến 2 câu ngắn gọn, tổng dưới 25 từ, đi thẳng vào trọng tâm, TUYỆT ĐỐI KHÔNG viết dài dòng)",
+            "medium": "Vừa (từ 3 đến 4 câu chi tiết đầy đủ)",
+            "long": "Dài (từ 5 câu trở lên mô tả kỹ trải nghiệm)"
+        }
+        length_desc = length_map.get(str(length).lower(), str(length))
+
+        lang_map = {
+            "vi": "Tiếng Việt",
+            "en": "Tiếng Anh (English)"
+        }
+        lang_desc = lang_map.get(str(language).lower(), str(language))
+
         for batch_idx, chunk_qty in enumerate(chunks):
+            length_strict_rule = "4. BẮT BUỘC KHÔNG ĐƯỢC VƯỢT QUÁ 2 CÂU cho mỗi bài review. Giữ nội dung cực kỳ ngắn gọn, đi thẳng vào ý chính." if str(length).lower() == "short" else ""
+
             prompt = f"""
             Bạn đóng vai là khách hàng đã trực tiếp đến trải nghiệm dịch vụ tại địa điểm dưới đây:
             Tên doanh nghiệp: {business_details.get('name')}
@@ -135,14 +150,15 @@ class GeminiClient(BaseLLMClient):
             
             Hãy sinh ra đúng {chunk_qty} bài đánh giá (review) khác nhau hoàn toàn, đáp ứng chính xác các yêu cầu cấu hình sau:
             - Tông giọng: {tone}
-            - Ngôn ngữ: {language}
-            - Độ dài mỗi review: {length} (Ngắn: 1-2 câu ngắn gọn đi thẳng vào vấn đề; Vừa: 3-4 câu chi tiết đầy đủ; Dài: từ 5 câu trở lên mô tả kỹ trải nghiệm).
+            - Ngôn ngữ: {lang_desc}
+            - Độ dài mỗi review: {length_desc}
             - Yêu cầu từ khóa: {kw_text}
             
             Quy tắc viết:
             1. Bài viết phải cực kỳ tự nhiên, sử dụng ngôn từ đời thường như người dùng thật viết (được phép viết tắt nhẹ hoặc dùng từ cảm thán tự nhiên).
             2. Các bài viết không được trùng lặp cấu trúc hay ý chính với nhau.
             3. Điểm số đánh giá (rating) dao động từ 4 đến 5 sao (hầu hết nên là 5 sao).
+            {length_strict_rule}
             """
 
             def call_api():
