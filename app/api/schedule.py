@@ -36,7 +36,7 @@ async def create_review_schedule(
     # 2. Tạo bản ghi đặt lịch mới
     schedule_id = f"sched_{uuid.uuid4().hex[:16]}"
     
-    # Đảm bảo scheduled_at lớn hơn thời gian hiện tại
+    # Đảm bảo scheduled_at lớn hơn thời gian hiện tại và nằm trong khung giờ 9h-18h
     scheduled_at = payload.scheduled_at
     if scheduled_at.tzinfo is not None:
         scheduled_at = scheduled_at.astimezone().replace(tzinfo=None)
@@ -46,6 +46,12 @@ async def create_review_schedule(
          raise HTTPException(
              status_code=status.HTTP_400_BAD_REQUEST,
              detail="Thời gian đặt lịch đăng bài phải ở tương lai."
+         )
+
+    if scheduled_at.hour < 9 or scheduled_at.hour > 18 or (scheduled_at.hour == 18 and scheduled_at.minute > 0):
+         raise HTTPException(
+             status_code=status.HTTP_400_BAD_REQUEST,
+             detail="Thời gian đặt lịch đăng bài phải nằm trong khung giờ từ 9h đến 18h."
          )
 
     # Tránh trùng lặp lịch đăng trong toàn bộ hệ thống (Collision Avoidance)
@@ -347,13 +353,14 @@ async def create_auto_batch_schedule(
             current_scheduled_time = current_scheduled_time + timedelta(hours=random_hours)
             current_scheduled_time = current_scheduled_time.replace(second=0, microsecond=0)
         
-        # Đảm bảo không trùng lặp / quá sát (Collision Avoidance) và nằm trong dải 9h - 22h
+        # Đảm bảo không trùng lặp / quá sát (Collision Avoidance) và nằm trong dải 9h - 18h
         temp_time = current_scheduled_time.replace(second=0, microsecond=0)
-        if temp_time.hour < 9:
-            temp_time = temp_time.replace(hour=9, minute=random.randint(0, 30))
-        elif temp_time.hour > 22 or (temp_time.hour == 22 and temp_time.minute > 0):
-            temp_time = (temp_time + timedelta(days=1)).replace(hour=9, minute=random.randint(0, 30))
         while True:
+            if temp_time.hour < 9:
+                temp_time = temp_time.replace(hour=9, minute=random.randint(0, 30))
+            elif temp_time.hour > 18 or (temp_time.hour == 18 and temp_time.minute > 0):
+                temp_time = (temp_time + timedelta(days=1)).replace(hour=9, minute=random.randint(0, 30))
+            
             conflict = False
             for booked_time in booked_times:
                 diff = abs((temp_time - booked_time.replace(second=0, microsecond=0)).total_seconds())

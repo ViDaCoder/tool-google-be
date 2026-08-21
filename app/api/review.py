@@ -301,13 +301,14 @@ async def generate_reviews(
                         current_scheduled_time = current_scheduled_time + timedelta(hours=random_hours)
                         current_scheduled_time = current_scheduled_time.replace(second=0, microsecond=0)
                     
-                    # Đảm bảo không trùng lặp / quá sát (Collision Avoidance) và nằm trong dải 9h - 22h
+                    # Đảm bảo không trùng lặp / quá sát (Collision Avoidance) và nằm trong dải 9h - 18h
                     temp_time = current_scheduled_time.replace(second=0, microsecond=0)
-                    if temp_time.hour < 9:
-                        temp_time = temp_time.replace(hour=9, minute=random.randint(0, 30))
-                    elif temp_time.hour > 22 or (temp_time.hour == 22 and temp_time.minute > 0):
-                        temp_time = (temp_time + timedelta(days=1)).replace(hour=9, minute=random.randint(0, 30))
                     while True:
+                        if temp_time.hour < 9:
+                            temp_time = temp_time.replace(hour=9, minute=random.randint(0, 30))
+                        elif temp_time.hour > 18 or (temp_time.hour == 18 and temp_time.minute > 0):
+                            temp_time = (temp_time + timedelta(days=1)).replace(hour=9, minute=random.randint(0, 30))
+                        
                         conflict = False
                         for booked_time in booked_times:
                             diff = abs((temp_time - booked_time.replace(second=0, microsecond=0)).total_seconds())
